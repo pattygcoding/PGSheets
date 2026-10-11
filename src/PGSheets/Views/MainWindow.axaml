@@ -1,0 +1,63 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:PGSheets.Controls"
+        x:Class="PGSheets.Views.MainWindow"
+        Title="PGSheets"
+        Width="1100"
+        Height="720"
+        MinWidth="640"
+        MinHeight="400">
+
+  <DockPanel LastChildFill="True">
+
+    <Menu DockPanel.Dock="Top">
+      <MenuItem Header="_File">
+        <MenuItem Header="_Open..." InputGesture="Ctrl+O" Click="OnOpenClicked" />
+        <Separator />
+        <MenuItem Header="E_xit" Click="OnExitClicked" />
+      </MenuItem>
+    </Menu>
+
+    <!-- Name box + formula bar, kept in sync with the active cell. -->
+    <Border DockPanel.Dock="Top" BorderBrush="#E0E0E0" BorderThickness="0,0,0,1" Padding="4">
+      <Grid ColumnDefinitions="120,*">
+        <TextBox x:Name="NameBox"
+                 Grid.Column="0"
+                 Margin="0,0,4,0"
+                 IsReadOnly="True"
+                 HorizontalContentAlignment="Center" />
+        <TextBox x:Name="FormulaBar" Grid.Column="1" />
+      </Grid>
+    </Border>
+
+    <Border DockPanel.Dock="Bottom" BorderBrush="#E0E0E0" BorderThickness="0,1,0,0" Padding="6,3">
+      <TextBlock x:Name="StatusText" Text="Ready" FontSize="12" Foreground="#5F6368" />
+    </Border>
+
+    <Grid ColumnDefinitions="*,Auto" RowDefinitions="*,Auto">
+
+      <!--
+        The grid and the single reusable editor share one cell. The editor is positioned with a
+        margin derived from the grid's cell geometry, so exactly one TextBox exists for the whole
+        sheet and it is only ever repositioned, never recreated.
+      -->
+      <Grid Grid.Row="0" Grid.Column="0" ClipToBounds="True">
+        <controls:SpreadsheetGridControl x:Name="SheetGrid" />
+
+        <TextBox x:Name="CellEditor"
+                 IsVisible="False"
+                 HorizontalAlignment="Left"
+                 VerticalAlignment="Top"
+                 BorderBrush="#1A73E8"
+                 BorderThickness="2"
+                 Padding="2,0"
+                 VerticalContentAlignment="Center" />
+      </Grid>
+
+      <ScrollBar x:Name="VScroll" Grid.Row="0" Grid.Column="1" Orientation="Vertical" />
+      <ScrollBar x:Name="HScroll" Grid.Row="1" Grid.Column="0" Orientation="Horizontal" />
+
+    </Grid>
+
+  </DockPanel>
+</Window>
