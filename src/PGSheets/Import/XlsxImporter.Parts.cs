@@ -1,8 +1,8 @@
-using System.Globalization;
 using System.IO.Compression;
 using System.Text;
 using System.Xml;
 using System.Xml.Linq;
+using PGSheets.Ooxml;
 
 namespace PGSheets.Import;
 
@@ -24,8 +24,8 @@ public sealed partial class XlsxImporter
         using var stream = workbookEntry.Open();
         var document = XDocument.Load(stream);
 
-        var main = XNamespace.Get(MainNamespace);
-        var relationshipsNs = XNamespace.Get(RelationshipNamespace);
+        var main = XNamespace.Get(SpreadsheetMl.MainNamespace);
+        var relationshipsNs = XNamespace.Get(SpreadsheetMl.RelationshipNamespace);
 
         foreach (var sheet in document.Descendants(main + "sheet"))
         {
@@ -88,7 +88,7 @@ public sealed partial class XlsxImporter
         }
 
         using var stream = entry.Open();
-        using var reader = XmlReader.Create(stream, XmlSettings);
+        using var reader = XmlReader.Create(stream, SpreadsheetMl.ReaderSettings);
 
         while (reader.Read())
         {
@@ -117,25 +117,5 @@ public sealed partial class XlsxImporter
         }
 
         return builder.ToString();
-    }
-
-    internal static string FormatDateSerial(double serial)
-    {
-        if (serial <= 0d)
-        {
-            return serial.ToString(CultureInfo.InvariantCulture);
-        }
-
-        try
-        {
-            var date = DateTime.FromOADate(serial);
-            return date.TimeOfDay == TimeSpan.Zero
-                ? date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)
-                : date.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
-        }
-        catch (ArgumentException)
-        {
-            return serial.ToString(CultureInfo.InvariantCulture);
-        }
     }
 }

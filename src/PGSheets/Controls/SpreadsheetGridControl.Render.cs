@@ -125,10 +125,24 @@ public sealed partial class SpreadsheetGridControl
         }
     }
 
+    /// <summary>Shades the selected block and outlines it, with the active cell outlined inside.</summary>
     private void DrawSelectionHighlight(DrawingContext context)
     {
-        var rect = new Rect(ColumnX(_activeColumn), RowY(_activeRow), _columnWidth, _rowHeight);
+        var range = Selection;
+
+        var rect = new Rect(
+            ColumnX(range.Column1),
+            RowY(range.Row1),
+            range.ColumnCount * _columnWidth,
+            range.RowCount * _rowHeight);
+
         context.FillRectangle(SelectionFillBrush, rect);
         context.DrawRectangle(null, SelectionPen, rect);
+
+        // A big selection would otherwise hide which cell keyboard input will land in.
+        if (!range.IsSingleCell)
+        {
+            context.DrawRectangle(null, SelectionPen, GetCellBounds(_activeRow, _activeColumn));
+        }
     }
 }

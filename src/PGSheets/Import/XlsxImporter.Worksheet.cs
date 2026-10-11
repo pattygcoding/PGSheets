@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Xml;
 using PGSheets.Core;
 using PGSheets.Formulas;
+using PGSheets.Ooxml;
 
 namespace PGSheets.Import;
 
@@ -15,12 +16,12 @@ public sealed partial class XlsxImporter
         Stream stream,
         IImportSink sink,
         List<string> sharedStrings,
-        Dictionary<int, bool> dateStyles,
+        Dictionary<int, string> numberFormats,
         ImportResult result,
         bool importFormulas,
         CancellationToken cancellationToken)
     {
-        using var reader = XmlReader.Create(stream, XmlSettings);
+        using var reader = XmlReader.Create(stream, SpreadsheetMl.ReaderSettings);
 
         var currentRow = -1;
         var nextColumn = 0;
@@ -107,7 +108,7 @@ public sealed partial class XlsxImporter
                 }
             }
 
-            var raw = ResolveCellText(type, value, formula, inlineText, styleAttribute, sharedStrings, dateStyles, importFormulas);
+            var (raw, format) = ResolveCell(type, value, formula, inlineText, styleAttribute, sharedStrings, numberFormats, importFormulas);
 
             if (importFormulas && formula is { Length: > 0 })
             {
@@ -123,6 +124,12 @@ public sealed partial class XlsxImporter
             if (row >= 0 && column >= 0 && row < SheetBounds.MaxRows && column < SheetBounds.MaxColumns)
             {
                 sink.SetRawInput(row, column, raw);
+
+                if (!string.IsNullOrEmpty(format))
+                {
+                    // The format is what makes a serial read as a date, so it travels with the value.
+                    sink.SetNumberFormat(row, column, format);
+                }
 
                 if (raw.Length > 0)
                 {

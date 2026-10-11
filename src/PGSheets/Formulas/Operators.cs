@@ -43,6 +43,12 @@ public sealed class ComparisonNode : IFormulaNode
         _right = right;
     }
 
+    public ComparisonOperator Operator => _operator;
+
+    public IFormulaNode Left => _left;
+
+    public IFormulaNode Right => _right;
+
     public CellValue Evaluate(IFormulaContext context)
     {
         var left = _left.Evaluate(context);
@@ -93,6 +99,10 @@ public sealed class UnaryNode : IFormulaNode
         _operand = operand;
     }
 
+    public UnaryOperator Operator => _operator;
+
+    public IFormulaNode Operand => _operand;
+
     public CellValue Evaluate(IFormulaContext context)
     {
         var value = _operand.Evaluate(context);
@@ -126,6 +136,12 @@ public sealed class BinaryNode : IFormulaNode
         _left = left;
         _right = right;
     }
+
+    public BinaryOperator Operator => _operator;
+
+    public IFormulaNode Left => _left;
+
+    public IFormulaNode Right => _right;
 
     public CellValue Evaluate(IFormulaContext context)
     {

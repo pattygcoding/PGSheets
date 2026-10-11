@@ -18,7 +18,7 @@ public class FormulaEngineAdvancedTests
     public void Unknown_function_is_reported()
     {
         var model = Sheet.CreateModel();
-        Sheet.Set(model, "A1", "=VLOOKUP(1,2,3,4)");
+        Sheet.Set(model, "A1", "=WEBSERVICE(1)");
 
         Assert.Equal("#NAME?", Sheet.Display(model, "A1"));
     }

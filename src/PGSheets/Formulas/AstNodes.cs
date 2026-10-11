@@ -20,11 +20,11 @@ public interface IFormulaNode
 /// <summary>A literal that always evaluates to an error (e.g. an out-of-range reference).</summary>
 public sealed class ErrorNode : IFormulaNode
 {
-    private readonly CellError _error;
+    public ErrorNode(CellError error) => Error = error;
 
-    public ErrorNode(CellError error) => _error = error;
+    public CellError Error { get; }
 
-    public CellValue Evaluate(IFormulaContext context) => CellValue.FromError(_error);
+    public CellValue Evaluate(IFormulaContext context) => CellValue.FromError(Error);
 
     public void CollectPrecedents(HashSet<CellAddress> into)
     {
@@ -33,11 +33,11 @@ public sealed class ErrorNode : IFormulaNode
 
 public sealed class NumberNode : IFormulaNode
 {
-    private readonly double _value;
+    public NumberNode(double value) => Value = value;
 
-    public NumberNode(double value) => _value = value;
+    public double Value { get; }
 
-    public CellValue Evaluate(IFormulaContext context) => CellValue.FromNumber(_value);
+    public CellValue Evaluate(IFormulaContext context) => CellValue.FromNumber(Value);
 
     public void CollectPrecedents(HashSet<CellAddress> into)
     {
@@ -46,11 +46,11 @@ public sealed class NumberNode : IFormulaNode
 
 public sealed class TextNode : IFormulaNode
 {
-    private readonly string _value;
+    public TextNode(string value) => Value = value;
 
-    public TextNode(string value) => _value = value;
+    public string Value { get; }
 
-    public CellValue Evaluate(IFormulaContext context) => CellValue.FromText(_value);
+    public CellValue Evaluate(IFormulaContext context) => CellValue.FromText(Value);
 
     public void CollectPrecedents(HashSet<CellAddress> into)
     {
@@ -59,46 +59,71 @@ public sealed class TextNode : IFormulaNode
 
 public sealed class BooleanNode : IFormulaNode
 {
-    private readonly bool _value;
+    public BooleanNode(bool value) => Value = value;
 
-    public BooleanNode(bool value) => _value = value;
+    public bool Value { get; }
 
-    public CellValue Evaluate(IFormulaContext context) => CellValue.FromBoolean(_value);
+    public CellValue Evaluate(IFormulaContext context) => CellValue.FromBoolean(Value);
 
     public void CollectPrecedents(HashSet<CellAddress> into)
     {
     }
 }
 
+/// <summary>
+/// A reference to one cell, carrying its <c>$</c> anchors so a copy can shift the relative parts and
+/// leave the anchored ones alone.
+/// </summary>
 public sealed class CellRefNode : IFormulaNode
 {
-    public CellRefNode(int row, int column)
-    {
-        Row = row;
-        Column = column;
-    }
+    public CellRefNode(int row, int column, bool absoluteRow = false, bool absoluteColumn = false) =>
+        Reference = new CellReference(row, column, absoluteRow, absoluteColumn);
 
-    public int Row { get; }
+    public CellReference Reference { get; }
 
-    public int Column { get; }
+    public int Row => Reference.Row;
 
-    public CellValue Evaluate(IFormulaContext context) => context.GetCellValue(Row, Column);
+    public int Column => Reference.Column;
 
-    public void CollectPrecedents(HashSet<CellAddress> into) => into.Add(new CellAddress(Row, Column));
+    public bool AbsoluteRow => Reference.AbsoluteRow;
+
+    public bool AbsoluteColumn => Reference.AbsoluteColumn;
+
+    public CellValue Evaluate(IFormulaContext context) => context.GetCellValue(Reference.Row, Reference.Column);
+
+    public void CollectPrecedents(HashSet<CellAddress> into) =>
+        into.Add(new CellAddress(Reference.Row, Reference.Column));
 }
 
 /// <summary>
 /// A rectangular range such as A1:B5. A range is only meaningful as a function argument, so
-/// evaluating one directly is an error; functions enumerate it instead.
+/// evaluating one directly is an error; functions enumerate it instead. Each corner keeps its own
+/// anchors, and normalising the corners carries the anchors with them.
 /// </summary>
 public sealed class RangeRefNode : IFormulaNode
 {
-    public RangeRefNode(int row1, int column1, int row2, int column2)
+    public RangeRefNode(
+        int row1,
+        int column1,
+        int row2,
+        int column2,
+        bool absoluteRow1 = false,
+        bool absoluteColumn1 = false,
+        bool absoluteRow2 = false,
+        bool absoluteColumn2 = false)
     {
-        Row1 = Math.Min(row1, row2);
-        Row2 = Math.Max(row1, row2);
-        Column1 = Math.Min(column1, column2);
-        Column2 = Math.Max(column1, column2);
+        var rowsOrdered = row1 <= row2;
+        var columnsOrdered = column1 <= column2;
+
+        Row1 = rowsOrdered ? row1 : row2;
+        Row2 = rowsOrdered ? row2 : row1;
+        AbsoluteRow1 = rowsOrdered ? absoluteRow1 : absoluteRow2;
+        AbsoluteRow2 = rowsOrdered ? absoluteRow2 : absoluteRow1;
+
+        Column1 = columnsOrdered ? column1 : column2;
+        Column2 = columnsOrdered ? column2 : column1;
+        AbsoluteColumn1 = columnsOrdered ? absoluteColumn1 : absoluteColumn2;
+        AbsoluteColumn2 = columnsOrdered ? absoluteColumn2 : absoluteColumn1;
     }
 
     public int Row1 { get; }
@@ -108,6 +133,14 @@ public sealed class RangeRefNode : IFormulaNode
     public int Column1 { get; }
 
     public int Column2 { get; }
+
+    public bool AbsoluteRow1 { get; }
+
+    public bool AbsoluteRow2 { get; }
+
+    public bool AbsoluteColumn1 { get; }
+
+    public bool AbsoluteColumn2 { get; }
 
     public CellValue Evaluate(IFormulaContext context) => CellValue.FromError(CellError.Value);
 

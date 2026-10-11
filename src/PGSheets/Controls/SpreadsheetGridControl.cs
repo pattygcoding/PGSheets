@@ -38,6 +38,11 @@ public sealed partial class SpreadsheetGridControl : Control
     private int _activeRow;
     private int _activeColumn;
 
+    // The corner a selection was started from. Equal to the active cell when nothing is selected,
+    // which is why a plain click or arrow key collapses the selection.
+    private int _anchorRow;
+    private int _anchorColumn;
+
     private double _columnWidth = 100d;
     private double _rowHeight = 24d;
     private double _headerWidth = 52d;

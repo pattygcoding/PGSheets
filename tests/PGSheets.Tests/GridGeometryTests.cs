@@ -216,4 +216,167 @@ public class GridGeometryTests
         Assert.Equal("BA", Core.CellAddress.ToColumnName(52));
         Assert.Equal("XFD", Core.CellAddress.ToColumnName(Core.SheetBounds.MaxColumns - 1));
     }
+
+    // ---- Range selection ----------------------------------------------------------------------
+
+    [Fact]
+    public void A_new_grid_has_a_single_cell_selected()
+    {
+        var grid = CreateGrid();
+
+        Assert.Equal(new Core.CellRange(0, 0, 0, 0), grid.Selection);
+        Assert.True(grid.Selection.IsSingleCell);
+    }
+
+    [Fact]
+    public void A_plain_move_collapses_the_selection()
+    {
+        var grid = CreateGrid();
+        grid.SelectRange(new Core.CellRange(1, 1, 3, 3));
+
+        grid.SetActiveCell(2, 2);
+
+        Assert.Equal(new Core.CellRange(2, 2, 2, 2), grid.Selection);
+    }
+
+    [Fact]
+    public void Extending_grows_the_selection_from_the_anchor()
+    {
+        var grid = CreateGrid();
+        grid.SetActiveCell(1, 1);
+
+        grid.ExtendSelectionTo(4, 3);
+
+        Assert.Equal(new Core.CellRange(1, 1, 4, 3), grid.Selection);
+        Assert.Equal(4, grid.ActiveRow);
+        Assert.Equal(3, grid.ActiveColumn);
+    }
+
+    [Fact]
+    public void Extending_up_and_left_normalises_the_selection()
+    {
+        var grid = CreateGrid();
+        grid.SetActiveCell(5, 5);
+
+        grid.ExtendSelectionTo(2, 2);
+
+        Assert.Equal(new Core.CellRange(2, 2, 5, 5), grid.Selection);
+    }
+
+    [Fact]
+    public void Extending_by_a_delta_keeps_the_anchor()
+    {
+        var grid = CreateGrid();
+        grid.SetActiveCell(2, 2);
+
+        grid.ExtendActiveBy(1, 2);
+
+        Assert.Equal(new Core.CellRange(2, 2, 3, 4), grid.Selection);
+    }
+
+    [Fact]
+    public void Selection_changed_carries_the_range()
+    {
+        var grid = CreateGrid();
+        Core.CellRange reported = default;
+        grid.SelectionChanged += (_, e) => reported = e.Range;
+
+        grid.SetActiveCell(1, 1);
+        grid.ExtendSelectionTo(3, 4);
+
+        Assert.Equal(new Core.CellRange(1, 1, 3, 4), reported);
+    }
+
+    [Fact]
+    public void Changing_only_the_anchor_still_raises_selection_changed()
+    {
+        var grid = CreateGrid();
+        grid.SetActiveCell(2, 2);
+
+        var raised = 0;
+        grid.SelectionChanged += (_, _) => raised++;
+
+        // The active cell stays put; only the anchor moves.
+        grid.SelectRange(new Core.CellRange(2, 2, 5, 5));
+
+        Assert.Equal(1, raised);
+        Assert.Equal(new Core.CellRange(2, 2, 5, 5), grid.Selection);
+    }
+
+    [Fact]
+    public void Select_used_range_covers_the_data()
+    {
+        var grid = CreateGrid();
+        var model = Sheet.CreateModel();
+        Sheet.Set(model, "B2", "x");
+        Sheet.Set(model, "D4", "y");
+        grid.Model = model;
+
+        grid.SelectUsedRange();
+
+        Assert.Equal(new Core.CellRange(1, 1, 3, 3), grid.Selection);
+    }
+
+    [Fact]
+    public void Select_used_range_on_an_empty_sheet_selects_a1()
+    {
+        var grid = CreateGrid();
+        grid.Model = Sheet.CreateModel();
+
+        grid.SelectUsedRange();
+
+        Assert.Equal(new Core.CellRange(0, 0, 0, 0), grid.Selection);
+    }
+
+    [Fact]
+    public void Clearing_a_selection_is_one_undo_step()
+    {
+        var grid = CreateGrid();
+        var model = Sheet.CreateModel();
+        Sheet.Set(model, "A1", "a");
+        Sheet.Set(model, "B1", "b");
+        Sheet.Set(model, "A2", "c");
+        grid.Model = model;
+
+        // Setting up the cells was itself three edits; only the clear should be left to undo.
+        model.Undo.Clear();
+
+        grid.SelectRange(new Core.CellRange(0, 0, 1, 1));
+        grid.ClearSelection();
+
+        Assert.Equal(0, model.CellCount);
+        Assert.Equal(1, model.Undo.UndoDepth);
+
+        model.Undo.Undo();
+
+        Assert.Equal(3, model.CellCount);
+    }
+
+    [Fact]
+    public void Clearing_leaves_cells_outside_the_selection_alone()
+    {
+        var grid = CreateGrid();
+        var model = Sheet.CreateModel();
+        Sheet.Set(model, "A1", "inside");
+        Sheet.Set(model, "C3", "outside");
+        grid.Model = model;
+
+        grid.SelectRange(new Core.CellRange(0, 0, 0, 0));
+        grid.ClearSelection();
+
+        Assert.Equal(string.Empty, Sheet.Display(model, "A1"));
+        Assert.Equal("outside", Sheet.Display(model, "C3"));
+    }
+
+    [Fact]
+    public void Clearing_an_empty_selection_records_nothing()
+    {
+        var grid = CreateGrid();
+        grid.Model = Sheet.CreateModel();
+
+        grid.SelectRange(new Core.CellRange(0, 0, 5, 5));
+        grid.ClearSelection();
+
+        Assert.Equal(0, grid.Model.CellCount);
+    }
 }

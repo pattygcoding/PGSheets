@@ -103,6 +103,23 @@ internal static class XlsxFixtureBuilder
         </styleSheet>
         """;
 
+    /// <summary>
+    /// The same sheet with a workbook-defined number format instead of a built-in id, which is how a
+    /// real file carries anything the specification does not fix.
+    /// </summary>
+    public const string StylesWithCustomFormat = """
+        <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+          <numFmts count="1">
+            <numFmt numFmtId="164" formatCode="0.0%"/>
+          </numFmts>
+          <cellXfs count="2">
+            <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+            <xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
+          </cellXfs>
+        </styleSheet>
+        """;
+
     private const string SharedStrings = """
         <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
         <sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="3" uniqueCount="3">
@@ -171,10 +188,31 @@ internal static class XlsxFixtureBuilder
         <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
           <sheetData>
             <row r="1">
+              <c r="A1"><f>WEBSERVICE(B1)</f><v>0</v></c>
+            </row>
+            <row r="2">
+              <c r="A2"><f>_xlfn.UNICHAR(65)</f><v>0</v></c>
+            </row>
+          </sheetData>
+        </worksheet>
+        """;
+
+    /// <summary>
+    /// A worksheet whose formulas only call functions the engine implements, so importing it must
+    /// produce no warnings at all.
+    /// </summary>
+    public const string WorksheetWithFunctions = """
+        <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+          <sheetData>
+            <row r="1">
               <c r="A1"><f>VLOOKUP(B1,1,2,0)</f><v>0</v></c>
             </row>
             <row r="2">
-              <c r="A2"><f>_xlfn.TEXTJOIN(",",TRUE,B1)</f><v>0</v></c>
+              <c r="A2"><f>TEXTJOIN(",",TRUE,B1)</f><v>0</v></c>
+            </row>
+            <row r="3">
+              <c r="A3"><f>IFERROR(A1/0,"none")</f><v>none</v></c>
             </row>
           </sheetData>
         </worksheet>

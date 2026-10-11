@@ -7,20 +7,27 @@ namespace PGSheets.Import;
 
 public sealed partial class XlsxImporter
 {
-    /// <summary>Converts a raw worksheet cell into the text the model will store.</summary>
-    private static string ResolveCellText(
+    /// <summary>
+    /// Converts a raw worksheet cell into the text the model will store, together with the number
+    /// format that gives that text its meaning. A date stays the serial the file holds: the format is
+    /// what turns it back into a date, exactly as it does in a spreadsheet, which is also what makes
+    /// it behave like the number it is.
+    /// </summary>
+    private static (string Raw, string? Format) ResolveCell(
         string? type,
         string? value,
         string? formula,
         string? inlineText,
         string? styleAttribute,
         List<string> sharedStrings,
-        Dictionary<int, bool> dateStyles,
+        Dictionary<int, string> numberFormats,
         bool importFormulas)
     {
+        var format = ReadFormat(styleAttribute, numberFormats);
+
         if (importFormulas && formula is { Length: > 0 })
         {
-            return "=" + formula;
+            return ("=" + formula, format);
         }
 
         string raw;
@@ -50,19 +57,16 @@ public sealed partial class XlsxImporter
                 break;
         }
 
-        if (raw.Length > 0 &&
-            (type is null || type == "n") &&
-            styleAttribute is not null &&
-            int.TryParse(styleAttribute, NumberStyles.Integer, CultureInfo.InvariantCulture, out var styleIndex) &&
-            dateStyles.TryGetValue(styleIndex, out var isDate) &&
-            isDate &&
-            double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var serial))
-        {
-            return FormatDateSerial(serial);
-        }
-
-        return raw;
+        return (raw, format);
     }
+
+    /// <summary>The number format a cell refers to with its "s" attribute, or null when it has none.</summary>
+    private static string? ReadFormat(string? styleAttribute, Dictionary<int, string> numberFormats) =>
+        styleAttribute is not null &&
+        int.TryParse(styleAttribute, NumberStyles.Integer, CultureInfo.InvariantCulture, out var styleIndex) &&
+        numberFormats.TryGetValue(styleIndex, out var format)
+            ? format
+            : null;
 
     /// <summary>
     /// Reads the concatenated text of the element the reader is positioned on, leaving the reader on

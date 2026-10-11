@@ -47,10 +47,24 @@ public readonly record struct CellAddress(int Row, int Column)
     /// <summary>
     /// Parses A1 notation such as "A1" or "$B$7". Returns <c>false</c> for anything malformed.
     /// </summary>
-    public static bool TryParseA1(string? text, out int row, out int column)
+    public static bool TryParseA1(string? text, out int row, out int column) =>
+        TryParseA1(text, out row, out column, out _, out _);
+
+    /// <summary>
+    /// Parses A1 notation and reports which parts were anchored with <c>$</c>. The anchors matter
+    /// when a formula is copied, so the parser keeps them rather than discarding them.
+    /// </summary>
+    public static bool TryParseA1(
+        string? text,
+        out int row,
+        out int column,
+        out bool absoluteRow,
+        out bool absoluteColumn)
     {
         row = -1;
         column = -1;
+        absoluteRow = false;
+        absoluteColumn = false;
 
         if (string.IsNullOrEmpty(text))
         {
@@ -58,8 +72,11 @@ public readonly record struct CellAddress(int Row, int Column)
         }
 
         var index = 0;
+        var columnAnchored = false;
+
         if (text[index] == '$')
         {
+            columnAnchored = true;
             index++;
         }
 
@@ -93,8 +110,11 @@ public readonly record struct CellAddress(int Row, int Column)
             return false;
         }
 
+        var rowAnchored = false;
+
         if (index < text.Length && text[index] == '$')
         {
+            rowAnchored = true;
             index++;
         }
 
@@ -121,6 +141,8 @@ public readonly record struct CellAddress(int Row, int Column)
 
         row = rowNumber - 1;
         column = columnNumber - 1;
+        absoluteRow = rowAnchored;
+        absoluteColumn = columnAnchored;
         return true;
     }
 }

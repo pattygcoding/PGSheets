@@ -1,3 +1,5 @@
+using PGSheets.Core;
+
 namespace PGSheets.Controls;
 
 /// <summary>Raised when the grid wants the host to open the in-place editor for a cell.</summary>
@@ -21,16 +23,21 @@ public sealed class EditRequestedEventArgs : EventArgs
     public string? SeedText { get; }
 }
 
-/// <summary>Raised when the active cell changes.</summary>
+/// <summary>Raised when the active cell or the selected range changes.</summary>
 public sealed class CellSelectionChangedEventArgs : EventArgs
 {
-    public CellSelectionChangedEventArgs(int row, int column)
+    public CellSelectionChangedEventArgs(int row, int column, CellRange range)
     {
         Row = row;
         Column = column;
+        Range = range;
     }
 
+    /// <summary>The active (focused) cell, which is the moving end of the selection.</summary>
     public int Row { get; }
 
     public int Column { get; }
+
+    /// <summary>The whole selected block, which may be a single cell.</summary>
+    public CellRange Range { get; }
 }

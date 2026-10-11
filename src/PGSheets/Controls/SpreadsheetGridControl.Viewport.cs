@@ -27,7 +27,13 @@ public sealed partial class SpreadsheetGridControl
 
     public int ActiveColumn => _activeColumn;
 
-    /// <summary>Raised whenever the active cell changes.</summary>
+    /// <summary>
+    /// The selected block, always containing the active cell. Normalised, so the anchor may be
+    /// either corner; a single cell when nothing has been extended.
+    /// </summary>
+    public CellRange Selection => new(_anchorRow, _anchorColumn, _activeRow, _activeColumn);
+
+    /// <summary>Raised whenever the active cell or the selected range changes.</summary>
     public event EventHandler<CellSelectionChangedEventArgs>? SelectionChanged;
 
     /// <summary>Raised when the host should show the in-place editor for a cell.</summary>
@@ -69,19 +75,21 @@ public sealed partial class SpreadsheetGridControl
 
     private void OnModelChanged(object? sender, EventArgs e) => InvalidateVisual();
 
-    /// <summary>Scrolls back to A1 and makes the first cell active.</summary>
+    /// <summary>Scrolls back to A1 and collapses the selection onto the first cell.</summary>
     public void ResetView()
     {
         _scrollX = 0d;
         _scrollY = 0d;
 
-        var changed = _activeRow != 0 || _activeColumn != 0;
+        var changed = _activeRow != 0 || _activeColumn != 0 || _anchorRow != 0 || _anchorColumn != 0;
         _activeRow = 0;
         _activeColumn = 0;
+        _anchorRow = 0;
+        _anchorColumn = 0;
 
         if (changed)
         {
-            SelectionChanged?.Invoke(this, new CellSelectionChangedEventArgs(0, 0));
+            SelectionChanged?.Invoke(this, new CellSelectionChangedEventArgs(0, 0, Selection));
         }
     }
 
@@ -106,27 +114,79 @@ public sealed partial class SpreadsheetGridControl
         RaiseViewportChanged();
     }
 
-    /// <summary>Moves the active cell by a delta, scrolling it into view.</summary>
+    /// <summary>Moves the active cell by a delta, collapsing the selection onto it.</summary>
     public void MoveActiveBy(int rowDelta, int columnDelta) =>
         SetActiveCell(_activeRow + rowDelta, _activeColumn + columnDelta);
 
-    /// <summary>Makes a cell active, scrolling it fully into view.</summary>
-    public void SetActiveCell(int row, int column)
-    {
-        row = Math.Clamp(row, 0, _rowCount - 1);
-        column = Math.Clamp(column, 0, _columnCount - 1);
+    /// <summary>Moves the active cell by a delta while keeping the anchor, growing the selection.</summary>
+    public void ExtendActiveBy(int rowDelta, int columnDelta) =>
+        ExtendSelectionTo(_activeRow + rowDelta, _activeColumn + columnDelta);
 
-        if (row == _activeRow && column == _activeColumn)
+    /// <summary>Makes a cell active and collapses the selection onto it.</summary>
+    public void SetActiveCell(int row, int column) => SetSelection(row, column, row, column);
+
+    /// <summary>Moves the active cell while keeping the anchor, growing or shrinking the selection.</summary>
+    public void ExtendSelectionTo(int row, int column) =>
+        SetSelection(_anchorRow, _anchorColumn, row, column);
+
+    /// <summary>Selects a whole block.</summary>
+    public void SelectRange(CellRange range) =>
+        SetSelection(range.Row1, range.Column1, range.Row2, range.Column2);
+
+    /// <summary>
+    /// Selects the smallest rectangle covering every populated cell, or A1 when the sheet is empty.
+    /// </summary>
+    public void SelectUsedRange()
+    {
+        var model = Model;
+
+        if (model is null)
         {
-            EnsureCellVisible(row, column);
             return;
         }
 
-        _activeRow = row;
-        _activeColumn = column;
+        var minRow = int.MaxValue;
+        var minColumn = int.MaxValue;
+        var maxRow = int.MinValue;
+        var maxColumn = int.MinValue;
 
-        EnsureCellVisible(row, column);
-        SelectionChanged?.Invoke(this, new CellSelectionChangedEventArgs(row, column));
+        foreach (var (row, column) in model.PopulatedCells)
+        {
+            minRow = Math.Min(minRow, row);
+            maxRow = Math.Max(maxRow, row);
+            minColumn = Math.Min(minColumn, column);
+            maxColumn = Math.Max(maxColumn, column);
+        }
+
+        // Starting from A1 would sweep in empty leading rows and columns, so the box is the data's.
+        SelectRange(maxRow < 0
+            ? new CellRange(0, 0, 0, 0)
+            : new CellRange(minRow, minColumn, maxRow, maxColumn));
+    }
+
+    private void SetSelection(int anchorRow, int anchorColumn, int activeRow, int activeColumn)
+    {
+        anchorRow = Math.Clamp(anchorRow, 0, _rowCount - 1);
+        anchorColumn = Math.Clamp(anchorColumn, 0, _columnCount - 1);
+        activeRow = Math.Clamp(activeRow, 0, _rowCount - 1);
+        activeColumn = Math.Clamp(activeColumn, 0, _columnCount - 1);
+
+        if (anchorRow == _anchorRow &&
+            anchorColumn == _anchorColumn &&
+            activeRow == _activeRow &&
+            activeColumn == _activeColumn)
+        {
+            EnsureCellVisible(activeRow, activeColumn);
+            return;
+        }
+
+        _anchorRow = anchorRow;
+        _anchorColumn = anchorColumn;
+        _activeRow = activeRow;
+        _activeColumn = activeColumn;
+
+        EnsureCellVisible(activeRow, activeColumn);
+        SelectionChanged?.Invoke(this, new CellSelectionChangedEventArgs(activeRow, activeColumn, Selection));
         InvalidateVisual();
     }
 

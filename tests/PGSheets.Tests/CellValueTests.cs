@@ -30,6 +30,7 @@ public class CellValueTests
     [InlineData(CellError.Name, "#NAME?")]
     [InlineData(CellError.Number, "#NUM!")]
     [InlineData(CellError.Circular, "#CIRCULAR!")]
+    [InlineData(CellError.NotAvailable, "#N/A")]
     public void Errors_display_their_excel_code(CellError error, string expected)
     {
         var value = CellValue.FromError(error);

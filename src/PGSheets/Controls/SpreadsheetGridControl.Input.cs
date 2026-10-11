@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Input;
+using PGSheets.Core;
 
 namespace PGSheets.Controls;
 
@@ -16,12 +17,12 @@ public sealed partial class SpreadsheetGridControl
 
         var point = e.GetPosition(this);
 
-        // Column header strip: make the top cell of that column active.
+        // Column header strip: select the whole column.
         if (point.Y < _headerHeight && point.X >= _headerWidth)
         {
             if (TryHitTest(new Point(point.X, _headerHeight + 1d), out _, out var headerColumn))
             {
-                SetActiveCell(0, headerColumn);
+                SelectRange(new CellRange(0, headerColumn, _rowCount - 1, headerColumn));
                 Focus();
                 e.Handled = true;
             }
@@ -29,12 +30,12 @@ public sealed partial class SpreadsheetGridControl
             return;
         }
 
-        // Row header strip: make the first cell of that row active.
+        // Row header strip: select the whole row.
         if (point.X < _headerWidth && point.Y >= _headerHeight)
         {
             if (TryHitTest(new Point(_headerWidth + 1d, point.Y), out var headerRow, out _))
             {
-                SetActiveCell(headerRow, 0);
+                SelectRange(new CellRange(headerRow, 0, headerRow, _columnCount - 1));
                 Focus();
                 e.Handled = true;
             }
@@ -47,7 +48,16 @@ public sealed partial class SpreadsheetGridControl
             return;
         }
 
-        SetActiveCell(row, column);
+        // Shift+click grows the existing selection instead of starting a new one.
+        if (e.KeyModifiers.HasFlag(KeyModifiers.Shift))
+        {
+            ExtendSelectionTo(row, column);
+        }
+        else
+        {
+            SetActiveCell(row, column);
+        }
+
         Focus();
 
         if (e.ClickCount >= 2)
@@ -74,9 +84,10 @@ public sealed partial class SpreadsheetGridControl
             return;
         }
 
+        // Dragging extends the selection rather than moving it.
         if (TryHitTest(e.GetPosition(this), out var row, out var column))
         {
-            SetActiveCell(row, column);
+            ExtendSelectionTo(row, column);
         }
     }
 
@@ -109,8 +120,37 @@ public sealed partial class SpreadsheetGridControl
     {
         base.OnKeyDown(e);
 
-        // Leave accelerator combinations (Ctrl+C, Ctrl+O...) to the host window.
-        if (e.KeyModifiers.HasFlag(KeyModifiers.Control) || e.KeyModifiers.HasFlag(KeyModifiers.Alt))
+        var control = e.KeyModifiers.HasFlag(KeyModifiers.Control);
+        var shift = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
+        var alt = e.KeyModifiers.HasFlag(KeyModifiers.Alt);
+
+        // Ctrl+A is a selection concern, so the grid keeps it. Every other accelerator combination
+        // (Ctrl+S, Ctrl+O, Ctrl+C...) belongs to the host and is left to bubble.
+        if (control && !alt && !shift && e.Key == Key.A)
+        {
+            SelectUsedRange();
+            e.Handled = true;
+            return;
+        }
+
+        if (control && !alt && e.Key is Key.Home or Key.End)
+        {
+            var atStart = e.Key == Key.Home;
+
+            if (shift)
+            {
+                ExtendSelectionTo(atStart ? 0 : _rowCount - 1, atStart ? 0 : _columnCount - 1);
+            }
+            else
+            {
+                SetActiveCell(atStart ? 0 : _rowCount - 1, atStart ? 0 : _columnCount - 1);
+            }
+
+            e.Handled = true;
+            return;
+        }
+
+        if (control || alt)
         {
             return;
         }
@@ -121,47 +161,83 @@ public sealed partial class SpreadsheetGridControl
         switch (e.Key)
         {
             case Key.Left:
-                MoveActiveBy(0, -1);
+                Move(shift, 0, -1);
                 break;
             case Key.Right:
-                MoveActiveBy(0, 1);
+                Move(shift, 0, 1);
                 break;
             case Key.Up:
-                MoveActiveBy(-1, 0);
+                Move(shift, -1, 0);
                 break;
             case Key.Down:
-                MoveActiveBy(1, 0);
+                Move(shift, 1, 0);
                 break;
             case Key.PageUp:
-                MoveActiveBy(-pageRows, 0);
+                Move(shift, -pageRows, 0);
                 break;
             case Key.PageDown:
-                MoveActiveBy(pageRows, 0);
+                Move(shift, pageRows, 0);
                 break;
             case Key.Home:
-                SetActiveCell(_activeRow, 0);
+                MoveToRowStart(shift);
                 break;
             case Key.End:
-                SetActiveCell(_activeRow, _columnCount - 1);
+                MoveToRowEnd(shift);
                 break;
             case Key.Enter:
                 MoveActiveBy(1, 0);
                 break;
             case Key.Tab:
-                MoveActiveBy(0, 1);
+                MoveActiveBy(0, shift ? -1 : 1);
                 break;
             case Key.F2:
                 RequestEdit(_activeRow, _activeColumn, seedText: null);
                 break;
             case Key.Delete:
             case Key.Back:
-                ClearActiveCell();
+                ClearSelection();
                 break;
             default:
                 return;
         }
 
         e.Handled = true;
+    }
+
+    private void Move(bool extend, int rowDelta, int columnDelta)
+    {
+        if (extend)
+        {
+            ExtendActiveBy(rowDelta, columnDelta);
+        }
+        else
+        {
+            MoveActiveBy(rowDelta, columnDelta);
+        }
+    }
+
+    private void MoveToRowStart(bool extend)
+    {
+        if (extend)
+        {
+            ExtendSelectionTo(_activeRow, 0);
+        }
+        else
+        {
+            SetActiveCell(_activeRow, 0);
+        }
+    }
+
+    private void MoveToRowEnd(bool extend)
+    {
+        if (extend)
+        {
+            ExtendSelectionTo(_activeRow, _columnCount - 1);
+        }
+        else
+        {
+            SetActiveCell(_activeRow, _columnCount - 1);
+        }
     }
 
     /// <summary>Typing a printable character starts an in-place edit seeded with that character.</summary>
@@ -189,6 +265,60 @@ public sealed partial class SpreadsheetGridControl
 
     /// <summary>Empties the active cell.</summary>
     public void ClearActiveCell() => CommitEdit(_activeRow, _activeColumn, string.Empty);
+
+    /// <summary>
+    /// Empties every populated cell in the selection. The whole thing is one undo step, and only
+    /// cells that exist are touched, so clearing a whole column stays cheap.
+    /// </summary>
+    public void ClearSelection()
+    {
+        var model = Model;
+
+        if (model is null)
+        {
+            return;
+        }
+
+        var range = Selection;
+
+        if (range.IsSingleCell)
+        {
+            CommitEdit(range.Row1, range.Column1, string.Empty);
+            return;
+        }
+
+        // Gather first: mutating the dictionary while enumerating it is not allowed.
+        var targets = new List<(int Row, int Column)>();
+
+        foreach (var (row, column) in model.PopulatedCells)
+        {
+            if (range.Contains(row, column))
+            {
+                targets.Add((row, column));
+            }
+        }
+
+        if (targets.Count == 0)
+        {
+            return;
+        }
+
+        model.BeginBulkUpdate();
+
+        try
+        {
+            foreach (var (row, column) in targets)
+            {
+                model.SetRawInput(row, column, string.Empty);
+            }
+        }
+        finally
+        {
+            model.EndBulkUpdate();
+        }
+
+        InvalidateVisual();
+    }
 
     private void RequestEdit(int row, int column, string? seedText) =>
         EditRequested?.Invoke(this, new EditRequestedEventArgs(row, column, seedText));

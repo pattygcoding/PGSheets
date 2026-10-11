@@ -1,5 +1,7 @@
 namespace PGSheets.Import;
 
+using PGSheets.Core;
+
 /// <summary>Outcome of an import: the used extent plus any non-fatal problems encountered.</summary>
 public sealed class ImportResult
 {
@@ -18,15 +20,12 @@ public sealed class ImportResult
     /// <summary>How many non-empty cells were written to the model.</summary>
     public int CellsImported { get; set; }
 
-    public void AddWarning(string message)
-    {
-        if (Warnings.Count < 100)
-        {
-            Warnings.Add(message);
-        }
-        else if (Warnings.Count == 100)
-        {
-            Warnings.Add("Further warnings suppressed.");
-        }
-    }
+    /// <summary>
+    /// How many worksheets the source document held. Saving writes a single worksheet, so a caller
+    /// that sees more than one here must not write back over the original file: it would destroy
+    /// every sheet that was never loaded.
+    /// </summary>
+    public int WorksheetCount { get; set; } = 1;
+
+    public void AddWarning(string message) => CappedWarnings.Add(Warnings, message);
 }

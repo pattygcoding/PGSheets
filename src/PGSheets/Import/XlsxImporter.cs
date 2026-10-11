@@ -15,17 +15,6 @@ namespace PGSheets.Import;
 /// </remarks>
 public sealed partial class XlsxImporter : ISpreadsheetImporter
 {
-    internal const string MainNamespace = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
-    internal const string RelationshipNamespace = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
-
-    private static readonly XmlReaderSettings XmlSettings = new()
-    {
-        DtdProcessing = DtdProcessing.Prohibit,
-        IgnoreComments = true,
-        IgnoreProcessingInstructions = true,
-        XmlResolver = null,
-    };
-
     public IReadOnlyList<string> Extensions { get; } = new[] { ".xlsx", ".xlsm" };
 
     /// <summary>
@@ -51,6 +40,7 @@ public sealed partial class XlsxImporter : ISpreadsheetImporter
         using var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true);
 
         var sheets = ReadWorkbookSheets(archive, result);
+        result.WorksheetCount = sheets.Count;
 
         if (sheets.Count == 0)
         {
@@ -67,7 +57,7 @@ public sealed partial class XlsxImporter : ISpreadsheetImporter
         result.SheetName = sheetName;
 
         var sharedStrings = ReadSharedStrings(archive);
-        var dateStyles = ReadDateStyles(archive);
+        var numberFormats = ReadNumberFormats(archive);
 
         var entry = archive.GetEntry(sheetPath);
         if (entry is null)
@@ -77,7 +67,7 @@ public sealed partial class XlsxImporter : ISpreadsheetImporter
         }
 
         using var sheetStream = entry.Open();
-        ParseWorksheet(sheetStream, sink, sharedStrings, dateStyles, result, ImportFormulas, cancellationToken);
+        ParseWorksheet(sheetStream, sink, sharedStrings, numberFormats, result, ImportFormulas, cancellationToken);
 
         return result;
     }

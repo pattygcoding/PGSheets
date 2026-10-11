@@ -26,7 +26,7 @@ public static partial class FormulaParser
                 "#REF!" => new ErrorNode(CellError.Reference),
                 "#NAME?" => new ErrorNode(CellError.Name),
                 "#NUM!" => new ErrorNode(CellError.Number),
-                "#N/A" or "#N/A!" => new ErrorNode(CellError.Value),
+                "#N/A" or "#N/A!" => new ErrorNode(CellError.NotAvailable),
                 _ => throw new FormulaException(CellError.Name, $"Unknown error literal '{token}'."),
             };
         }
@@ -59,7 +59,12 @@ public static partial class FormulaParser
                 return new BooleanNode(false);
             }
 
-            if (!CellAddress.TryParseA1(token, out var row, out var column))
+            if (!CellAddress.TryParseA1(
+                    token,
+                    out var row,
+                    out var column,
+                    out var absoluteRow,
+                    out var absoluteColumn))
             {
                 throw new FormulaException(CellError.Name, $"Unknown name '{token}'.");
             }
@@ -73,7 +78,7 @@ public static partial class FormulaParser
 
             if (Peek() != ':')
             {
-                return new CellRefNode(row, column);
+                return new CellRefNode(row, column, absoluteRow, absoluteColumn);
             }
 
             _index++; // ':'
@@ -87,7 +92,12 @@ public static partial class FormulaParser
 
             var rangeToken = _text[rangeStart.._index];
 
-            if (!CellAddress.TryParseA1(rangeToken, out var row2, out var column2))
+            if (!CellAddress.TryParseA1(
+                    rangeToken,
+                    out var row2,
+                    out var column2,
+                    out var absoluteRow2,
+                    out var absoluteColumn2))
             {
                 throw new FormulaException(CellError.Reference, $"Invalid range end '{rangeToken}'.");
             }
@@ -97,7 +107,15 @@ public static partial class FormulaParser
                 throw new FormulaException(CellError.Reference, "Range exceeds the sheet bounds.");
             }
 
-            return new RangeRefNode(row, column, row2, column2);
+            return new RangeRefNode(
+                row,
+                column,
+                row2,
+                column2,
+                absoluteRow,
+                absoluteColumn,
+                absoluteRow2,
+                absoluteColumn2);
         }
 
         private static bool IsIdentifierChar(char ch) =>

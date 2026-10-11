@@ -22,6 +22,9 @@ public enum CellError : byte
     Name,
     Number,
     Circular,
+
+    /// <summary>No match: what a failed lookup returns, and what ISNA and IFNA test for.</summary>
+    NotAvailable,
 }
 
 /// <summary>
@@ -108,14 +111,12 @@ public readonly struct CellValue : IEquatable<CellValue>
     /// <summary>The string the grid renders for this value.</summary>
     public string ToDisplayString() => Kind switch
     {
-        CellValueKind.Number => FormatNumber(Number),
+        CellValueKind.Number => NumberFormat.ApplyGeneral(Number),
         CellValueKind.Text => Text ?? string.Empty,
         CellValueKind.Boolean => Boolean ? "TRUE" : "FALSE",
         CellValueKind.Error => ErrorText(Error),
         _ => string.Empty,
     };
-
-    private static string FormatNumber(double value) => value.ToString("G15", CultureInfo.InvariantCulture);
 
     public static string ErrorText(CellError error) => error switch
     {
@@ -125,6 +126,7 @@ public readonly struct CellValue : IEquatable<CellValue>
         CellError.Name => "#NAME?",
         CellError.Number => "#NUM!",
         CellError.Circular => "#CIRCULAR!",
+        CellError.NotAvailable => "#N/A",
         _ => string.Empty,
     };
 

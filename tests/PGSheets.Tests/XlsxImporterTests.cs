@@ -48,16 +48,57 @@ public class XlsxImporterTests
     }
 
     [Fact]
-    public async Task Detects_date_formatted_cells()
+    public async Task A_date_cell_keeps_its_serial_and_gains_the_format_that_reads_it()
     {
         await using var stream = XlsxFixtureBuilder.Create();
         var sink = new RecordingSink();
 
         await new XlsxImporter().ImportAsync(stream, sink);
 
-        var expected = DateTime.FromOADate(XlsxFixtureBuilder.DateSerial).ToString("yyyy-MM-dd");
+        // The value stays the number the file holds, so it sorts and does arithmetic like a date
+        // should, and the format is what makes the grid show 03-15-23. Turning it into text on the
+        // way in — which is what this used to do — threw away both.
+        Assert.Equal("45000", sink.Get("C1"));
+        Assert.Equal("mm-dd-yy", sink.GetFormat("C1"));
 
-        Assert.Equal(expected, sink.Get("C1"));
+        var model = Sheet.CreateModel();
+        Sheet.Set(model, "C1", sink.Get("C1"));
+        model.SetNumberFormat(0, 2, sink.GetFormat("C1"));
+
+        Assert.Equal("03-15-23", Sheet.Display(model, "C1"));
+    }
+
+    [Fact]
+    public async Task A_cell_with_no_format_carries_none()
+    {
+        await using var stream = XlsxFixtureBuilder.Create();
+        var sink = new RecordingSink();
+
+        await new XlsxImporter().ImportAsync(stream, sink);
+
+        // Style 0 is General, which is the absence of a format rather than a format.
+        Assert.Null(sink.GetFormat("B2"));
+        Assert.Null(sink.GetFormat("A1"));
+    }
+
+    [Fact]
+    public async Task A_custom_number_format_comes_across()
+    {
+        var parts = XlsxFixtureBuilder.MutableParts();
+        parts["xl/styles.xml"] = XlsxFixtureBuilder.StylesWithCustomFormat;
+
+        await using var stream = XlsxFixtureBuilder.CreateFromParts(parts);
+        var sink = new RecordingSink();
+
+        await new XlsxImporter().ImportAsync(stream, sink);
+
+        Assert.Equal("0.0%", sink.GetFormat("C1"));
+
+        var model = Sheet.CreateModel();
+        Sheet.Set(model, "C1", "0.155");
+        model.SetNumberFormat(0, 2, "0.0%");
+
+        Assert.Equal("15.5%", Sheet.Display(model, "C1"));
     }
 
     [Fact]
@@ -150,6 +191,20 @@ public class XlsxImporterTests
         Assert.Equal("Sheet1", result.SheetName);
         Assert.Equal("Item", sink.Get("A1"));
         Assert.Contains(result.Warnings, warning => warning.Contains("only 'Sheet1' was imported"));
+
+        // The count is what lets the host refuse to overwrite the file it came from.
+        Assert.Equal(2, result.WorksheetCount);
+    }
+
+    [Fact]
+    public async Task A_single_worksheet_workbook_reports_one_worksheet()
+    {
+        await using var stream = XlsxFixtureBuilder.Create();
+        var sink = new RecordingSink();
+
+        var result = await new XlsxImporter().ImportAsync(stream, sink);
+
+        Assert.Equal(1, result.WorksheetCount);
     }
 
     [Fact]
@@ -163,12 +218,28 @@ public class XlsxImporterTests
 
         var result = await new XlsxImporter().ImportAsync(stream, sink);
 
-        Assert.Equal("=VLOOKUP(B1,1,2,0)", sink.Get("A1"));
-        Assert.Contains(result.Warnings, warning => warning.Contains("VLOOKUP"));
+        Assert.Equal("=WEBSERVICE(B1)", sink.Get("A1"));
+        Assert.Contains(result.Warnings, warning => warning.Contains("WEBSERVICE"));
 
         // The _xlfn. prefix is stripped so the reported name is readable.
-        Assert.Contains(result.Warnings, warning => warning.Contains("TEXTJOIN"));
+        Assert.Contains(result.Warnings, warning => warning.Contains("UNICHAR"));
         Assert.DoesNotContain(result.Warnings, warning => warning.Contains("_xlfn"));
+    }
+
+    [Fact]
+    public async Task Supported_functions_are_not_reported_as_warnings()
+    {
+        var parts = XlsxFixtureBuilder.MutableParts();
+        parts["xl/worksheets/sheet1.xml"] = XlsxFixtureBuilder.WorksheetWithFunctions;
+
+        await using var stream = XlsxFixtureBuilder.CreateFromParts(parts);
+        var sink = new RecordingSink();
+
+        var result = await new XlsxImporter().ImportAsync(stream, sink);
+
+        Assert.Equal("=VLOOKUP(B1,1,2,0)", sink.Get("A1"));
+        Assert.Equal("=TEXTJOIN(\",\",TRUE,B1)", sink.Get("A2"));
+        Assert.Empty(result.Warnings);
     }
 
     [Fact]

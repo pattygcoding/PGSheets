@@ -14,6 +14,8 @@ public sealed partial class SpreadsheetGridControl
             return;
         }
 
+        var range = Selection;
+
         context.FillRectangle(HeaderBrush, new Rect(_headerWidth, 0d, ViewportWidth, _headerHeight));
 
         for (var column = firstColumn; column <= lastColumn; column++)
@@ -25,7 +27,7 @@ public sealed partial class SpreadsheetGridControl
                 continue;
             }
 
-            if (column == _activeColumn)
+            if (column >= range.Column1 && column <= range.Column2)
             {
                 context.FillRectangle(HeaderActiveBrush, new Rect(x, 0d, _columnWidth, _headerHeight));
             }
@@ -49,6 +51,8 @@ public sealed partial class SpreadsheetGridControl
             return;
         }
 
+        var range = Selection;
+
         context.FillRectangle(HeaderBrush, new Rect(0d, _headerHeight, _headerWidth, ViewportHeight));
 
         for (var row = firstRow; row <= lastRow; row++)
@@ -60,7 +64,7 @@ public sealed partial class SpreadsheetGridControl
                 continue;
             }
 
-            if (row == _activeRow)
+            if (row >= range.Row1 && row <= range.Row2)
             {
                 context.FillRectangle(HeaderActiveBrush, new Rect(0d, y, _headerWidth, _rowHeight));
             }

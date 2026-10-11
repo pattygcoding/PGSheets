@@ -12,9 +12,51 @@
 
     <Menu DockPanel.Dock="Top">
       <MenuItem Header="_File">
+        <MenuItem Header="_New" InputGesture="Ctrl+N" Click="OnNewClicked" />
         <MenuItem Header="_Open..." InputGesture="Ctrl+O" Click="OnOpenClicked" />
         <Separator />
+        <MenuItem Header="_Save" InputGesture="Ctrl+S" Click="OnSaveClicked" />
+        <MenuItem Header="Save _As..." InputGesture="Ctrl+Shift+S" Click="OnSaveAsClicked" />
+        <Separator />
         <MenuItem Header="E_xit" Click="OnExitClicked" />
+      </MenuItem>
+
+      <MenuItem Header="_Edit">
+        <MenuItem x:Name="UndoMenuItem" Header="_Undo" InputGesture="Ctrl+Z" Click="OnUndoClicked" />
+        <MenuItem x:Name="RedoMenuItem" Header="_Redo" InputGesture="Ctrl+Y" Click="OnRedoClicked" />
+        <Separator />
+        <MenuItem x:Name="CutMenuItem" Header="Cu_t" InputGesture="Ctrl+X" Click="OnCutClicked" />
+        <MenuItem x:Name="CopyMenuItem" Header="_Copy" InputGesture="Ctrl+C" Click="OnCopyClicked" />
+        <MenuItem x:Name="PasteMenuItem" Header="_Paste" InputGesture="Ctrl+V" Click="OnPasteClicked" />
+        <Separator />
+        <MenuItem Header="C_lear Contents" Click="OnClearClicked" />
+        <Separator />
+        <MenuItem Header="Select _All" InputGesture="Ctrl+A" Click="OnSelectAllClicked" />
+      </MenuItem>
+
+      <MenuItem Header="_Sheet">
+        <MenuItem Header="Insert _Rows" Click="OnInsertRowsClicked" />
+        <MenuItem Header="Insert _Columns" Click="OnInsertColumnsClicked" />
+        <Separator />
+        <MenuItem Header="Delete Ro_ws" Click="OnDeleteRowsClicked" />
+        <MenuItem Header="Delete Col_umns" Click="OnDeleteColumnsClicked" />
+        <Separator />
+        <MenuItem Header="_Number format">
+          <MenuItem Header="General" Click="OnNumberFormatClicked" />
+          <Separator />
+          <MenuItem Header="0" Click="OnNumberFormatClicked" />
+          <MenuItem Header="0.00" Click="OnNumberFormatClicked" />
+          <MenuItem Header="#,##0" Click="OnNumberFormatClicked" />
+          <MenuItem Header="#,##0.00" Click="OnNumberFormatClicked" />
+          <MenuItem Header="0%" Click="OnNumberFormatClicked" />
+          <MenuItem Header="0.0%" Click="OnNumberFormatClicked" />
+          <MenuItem Header="$#,##0.00" Click="OnNumberFormatClicked" />
+          <MenuItem Header="0000" Click="OnNumberFormatClicked" />
+          <Separator />
+          <MenuItem Header="yyyy-mm-dd" Click="OnNumberFormatClicked" />
+          <MenuItem Header="yyyy-mm-dd hh:mm" Click="OnNumberFormatClicked" />
+          <MenuItem Header="hh:mm:ss" Click="OnNumberFormatClicked" />
+        </MenuItem>
       </MenuItem>
     </Menu>
 
@@ -31,7 +73,20 @@
     </Border>
 
     <Border DockPanel.Dock="Bottom" BorderBrush="#E0E0E0" BorderThickness="0,1,0,0" Padding="6,3">
-      <TextBlock x:Name="StatusText" Text="Ready" FontSize="12" Foreground="#5F6368" />
+      <Grid ColumnDefinitions="*,Auto">
+        <TextBlock x:Name="StatusText"
+                   Grid.Column="0"
+                   Text="Ready"
+                   FontSize="12"
+                   Foreground="#5F6368"
+                   TextTrimming="CharacterEllipsis" />
+        <!-- Excel-style aggregate of the selected numbers. -->
+        <TextBlock x:Name="SelectionText"
+                   Grid.Column="1"
+                   Margin="16,0,0,0"
+                   FontSize="12"
+                   Foreground="#5F6368" />
+      </Grid>
     </Border>
 
     <Grid ColumnDefinitions="*,Auto" RowDefinitions="*,Auto">

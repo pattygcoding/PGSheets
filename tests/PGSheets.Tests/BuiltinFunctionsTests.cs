@@ -131,4 +131,61 @@ public class BuiltinFunctionsTests
         Assert.True(Formulas.BuiltinFunctions.IsKnown("sum"));
         Assert.False(Formulas.BuiltinFunctions.IsKnown("NOPE"));
     }
+
+    [Theory]
+    [InlineData("SUM")]
+    [InlineData("IF")]
+    [InlineData("IFERROR")]
+    [InlineData("VLOOKUP")]
+    [InlineData("INDEX")]
+    [InlineData("MATCH")]
+    [InlineData("COUNTIF")]
+    [InlineData("SUMIF")]
+    [InlineData("LEFT")]
+    [InlineData("TEXTJOIN")]
+    [InlineData("MEDIAN")]
+    [InlineData("STDEV")]
+    [InlineData("ROUND")]
+    [InlineData("CEILING")]
+    [InlineData("CHOOSE")]
+    [InlineData("ISNA")]
+    public void The_library_covers_the_functions_a_real_workbook_reaches_for(string name)
+    {
+        Assert.True(Formulas.BuiltinFunctions.IsKnown(name), $"'{name}' is missing from the registry.");
+    }
+
+    [Fact]
+    public void Every_built_in_function_survives_bad_input_without_throwing()
+    {
+        // One sweep over the whole shipped library. Being called with no arguments is the input
+        // every built-in has to cope with, and none of them may throw: a bad argument is #VALUE!,
+        // not an exception escaping into the recalculation of an unrelated cell.
+        foreach (var name in BuiltInLibrary.Names)
+        {
+            Assert.True(
+                Formulas.BuiltinFunctions.TryGet(name, out var function),
+                $"'{name}' is in the registry but cannot be looked up.");
+
+            var first = function(Array.Empty<Formulas.IFormulaNode>(), new EmptyContext());
+            var second = function(Array.Empty<Formulas.IFormulaNode>(), new EmptyContext());
+
+            // A worksheet function holds no hidden state, so the same call must give the same answer.
+            Assert.True(first.Equals(second), $"'{name}' is not deterministic.");
+        }
+    }
+
+    [Fact]
+    public void The_sweep_covers_the_whole_library()
+    {
+        // A guard on the test above: if the snapshot were empty it would pass while testing nothing.
+        Assert.True(BuiltInLibrary.Names.Length >= 78, $"Only {BuiltInLibrary.Names.Length} functions were swept.");
+        Assert.Contains("SUM", BuiltInLibrary.Names);
+        Assert.Contains("VLOOKUP", BuiltInLibrary.Names);
+    }
+
+    /// <summary>A context in which every cell is empty.</summary>
+    private sealed class EmptyContext : Formulas.IFormulaContext
+    {
+        public Core.CellValue GetCellValue(int row, int column) => Core.CellValue.Empty;
+    }
 }
