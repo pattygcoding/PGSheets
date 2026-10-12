@@ -1,0 +1,44 @@
+# Workspace for PGSheets.
+#
+# This is the whole project: it replaced a C#/.NET implementation of the same program, which was deleted
+# once this one matched it. See ../Documents/adr/0001-rust-rewrite.md for the decision record, and
+# ../Documents/development.md for what that leaves frozen.
+
+[workspace]
+resolver = "3"
+members = [
+    "crates/pgsheets-core",
+    "crates/pgsheets-formulas",
+    "crates/pgsheets-sheet",
+    "crates/pgsheets-io",
+    "crates/pgsheets-app",
+    "crates/pgsheets-testkit",
+]
+default-members = ["crates/pgsheets-app"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+# The floor eframe needs, not the version this was developed against: the local toolchain is
+# `stable`, and CI pins an exact toolchain instead (see .github/workflows/ci.yml), which keeps a
+# fresh clone from having to download anything beyond what rustup already has.
+rust-version = "1.95"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/pattygcoding/PGSheets"
+
+# Warnings are errors: CI builds every target with `-- -D warnings`, so an unused import or an
+# undocumented public item fails the build. `missing_docs` is the Rust counterpart of the "doc comments
+# on public members" convention.
+[workspace.lints.rust]
+unsafe_code = "forbid"
+unused = { level = "deny", priority = -1 }
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+dbg_macro = "deny"
+
+# The app is the only profile that matters for users; tests run in the default dev profile.
+[profile.release]
+lto = "thin"

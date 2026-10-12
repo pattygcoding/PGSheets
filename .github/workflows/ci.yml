@@ -10,13 +10,8 @@ on:
 permissions:
   contents: read
 
-env:
-  DOTNET_NOLOGO: true
-  DOTNET_CLI_TELEMETRY_OPTOUT: true
-  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
-
 jobs:
-  build-and-test:
+  rust:
     name: Build & test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
 
@@ -25,34 +20,52 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
 
+    defaults:
+      run:
+        working-directory: rust
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up .NET 8
-        uses: actions/setup-dotnet@v4
+      # The repository pins only a floor (rust-version in Cargo.toml); the toolchain actually tested
+      # against is pinned here, which is what keeps a local `stable` honest.
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
-          dotnet-version: 8.0.x
+          components: rustfmt, clippy
 
-      - name: Restore
-        run: dotnet restore PGSheets.sln
+      - name: Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
 
-      # TreatWarningsAsErrors is set in Directory.Build.props, so the repo's
-      # "warnings must stay at zero" rule is enforced on every platform here.
+      # `cargo fmt --check` and clippy with `-D warnings` are this repository's "warnings must stay at
+      # zero" rule: `[workspace.lints]` denies the unused group, so a warning fails the build.
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Lint
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
       - name: Build
-        run: dotnet build PGSheets.sln -c Release --no-restore
+        run: cargo build --workspace --release --locked
 
       - name: Test
-        run: >
-          dotnet test PGSheets.sln -c Release --no-build
-          --logger "trx;LogFileName=test-results.trx"
-          --collect:"XPlat Code Coverage"
-          --results-directory ${{ runner.temp }}/TestResults
+        run: cargo test --workspace --locked
 
-      - name: Upload test results
-        if: always()
+      # One platform is enough for coverage; the test run above is what has to pass everywhere.
+      - name: Coverage
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          cargo install cargo-llvm-cov --locked
+          cargo llvm-cov --workspace --lcov --output-path lcov.info
+
+      - name: Upload coverage
+        if: matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@v4
         with:
-          name: test-results-${{ matrix.os }}
-          path: ${{ runner.temp }}/TestResults
-          if-no-files-found: ignore
+          name: rust-coverage
+          path: rust/lcov.info
+          if-no-files-found: error
+

@@ -1,0 +1,29 @@
+[package]
+name = "pgsheets-io"
+description = "SpreadsheetML (xlsx) and delimited-text (csv) readers and writers."
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+pgsheets-core = { path = "../pgsheets-core" }
+pgsheets-formulas = { path = "../pgsheets-formulas" }
+
+# These two are the whole reason this crate exists: `std` has neither a zip container nor an XML
+# reader. Neither is a spreadsheet library, so the project's "no third-party spreadsheet packages"
+# rule still holds — the OOXML parts, content types, relationships, style table and cell
+# serialisation are all written here.
+#
+# `zip` is taken with only the pure-Rust deflate backend so the build needs no C toolchain on any of
+# the three CI platforms, and with its cryptographic and exotic-compression features left off.
+zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+quick-xml = "0.42"
+
+[dev-dependencies]
+pgsheets-testkit = { path = "../pgsheets-testkit" }

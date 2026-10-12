@@ -2,30 +2,32 @@
 
 ## What you need
 
-- **The .NET 8 SDK.** Nothing else. PGSheets has no third-party spreadsheet packages and no other
-  runtime dependency; the grid, the formula engine and the `.xlsx` reader and writer are all part of
-  the application.
-- **No network access at run time.** The one-time NuGet restore when you first build is the only
+- **A Rust toolchain, 1.95 or newer.** Nothing else. PGSheets has no third-party spreadsheet packages
+  and no other runtime dependency; the grid, the formula engine and the `.xlsx` reader and writer are
+  all part of this repository.
+- **No network access at run time.** The one-time `cargo` restore when you first build is the only
   thing that touches the internet.
 
-It runs on Windows, macOS and Linux, since the UI framework (Avalonia) is cross-platform and the
-repository's CI builds and tests on all three.
+It runs on Windows, macOS and Linux — the window is `eframe`/`egui`, which is cross-platform, and CI
+builds and tests on all three.
 
 ## Build and run
 
 ```powershell
-dotnet build PGSheets.sln -c Release
-dotnet run   --project src/PGSheets
+cd rust
+cargo run -p pgsheets-app
 ```
 
-Or run the built executable directly:
+Or build the release binary once and run it directly:
 
 ```powershell
-src\PGSheets\bin\Release\net8.0\PGSheets.exe
+cd rust
+cargo build --workspace --release
+.\target\release\pgsheets.exe
 ```
 
-There is no installer. The build output directory is a self-contained folder you can copy
-elsewhere.
+There is no installer. After a release build, `target\release\pgsheets.exe` is a single file you can
+copy elsewhere.
 
 ## What you see when it opens
 

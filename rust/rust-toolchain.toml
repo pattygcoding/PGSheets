@@ -1,0 +1,5 @@
+# `stable` rather than an exact patch version, because the repository's rule is that only the .NET 8
+# SDK is guaranteed to be present. CI pins the exact toolchain it tests against instead.
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]

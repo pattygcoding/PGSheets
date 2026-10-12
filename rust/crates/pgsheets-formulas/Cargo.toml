@@ -1,0 +1,15 @@
+[package]
+name = "pgsheets-formulas"
+description = "Formula parser, AST, dependency graph, function library and evaluation engine."
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+pgsheets-core = { path = "../pgsheets-core" }

@@ -1,0 +1,17 @@
+[package]
+name = "pgsheets-testkit"
+description = "Shared fixtures and assertion helpers for the PGSheets test suites."
+publish = false
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+pgsheets-core = { path = "../pgsheets-core" }
+pgsheets-formulas = { path = "../pgsheets-formulas" }

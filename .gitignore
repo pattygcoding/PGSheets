@@ -1,31 +1,13 @@
 ## Build output
-[Bb]in/
-[Oo]bj/
-[Oo]ut/
-artifacts/
+/rust/target/
+/rust/lcov.info
 
 ## IDE
-.vs/
 .vscode/
 .idea/
-*.user
-*.suo
-*.userprefs
-
-## Rider
-*.sln.iml
-
-## Test results
-[Tt]est[Rr]esult*/
-*.trx
-*.coverage
-
-## NuGet
-*.nupkg
-*.snupkg
-packages/
-.nuget/
+*.iml
 
 ## OS
 Thumbs.db
 .DS_Store
+

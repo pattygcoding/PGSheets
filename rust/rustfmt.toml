@@ -1,0 +1,5 @@
+edition = "2024"
+
+# Wide lines, so a comment or a chain of builders stays readable without wrapping gymnastics.
+max_width = 110
+use_field_init_shorthand = true

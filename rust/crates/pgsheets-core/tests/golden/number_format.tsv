@@ -1,0 +1,90 @@
+kind	value	format	result
+fmt	1.5	0	2
+fmt	2.5	0	3
+fmt	-1.5	0	-2
+fmt	0.5	0	1
+fmt	-0.5	0	-1
+fmt	1.4	0	1
+fmt	1.005	0.00	1.01
+fmt	1.234	0.00	1.23
+fmt	1.25	0.0#	1.25
+fmt	1.5	#.##	1.5
+fmt	0	0.000	0.000
+fmt	12	0000	0012
+fmt	1234567	#,##0	1,234,567
+fmt	999	#,##0	999
+fmt	1234.5	#,##0.00	1,234.50
+fmt	-1	#,##0.00	-1.00
+fmt	0.155	0%	16%
+fmt	0.155	0.0%	15.5%
+fmt	0.5	%0	%50
+fmt	1234.5678	$#,##0.00	$1,234.57
+fmt	1234.5678	"$"#,##0.00	$1,234.57
+fmt	5	0" units"	5 units
+fmt	123456789	#,##0,,	123
+fmt	1234567	#,##0,	1,235
+fmt	1.5	[Red]0.00	1.50
+fmt	1234	#,##0 "apples"	1,234 apples
+fmt	-1.5	0.00;[Red]-0.00	-1.50
+fmt	-1.5	0.00;(0.00)	(1.50)
+fmt	1.5	0.00;(0.00)	1.50
+fmt	-1.5	0.00;	
+fmt	0	0.00;0.00;"zero"	zero
+fmt	5	0.00;0.00;"zero"	5.00
+fmt	-5	0.00;0.00;"zero"	5.00
+fmt	45356	yyyy-mm-dd	2024-03-05
+fmt	45356	yyyy/mm/dd	2024/03/05
+fmt	45356	dd/mm/yyyy	05/03/2024
+fmt	45356	d mmm yyyy	5 Mar 2024
+fmt	45356	dddd, d mmmm yyyy	Tuesday, 5 March 2024
+fmt	45356	ddd d mmm yy	Tue 5 Mar 24
+fmt	45356	mmm-yy	Mar-24
+fmt	45356.5	hh:mm:ss	12:00:00
+fmt	45356.75	hh:mm	18:00
+fmt	45356.5	h:mm AM/PM	12:00 PM
+fmt	45356	h:mm AM/PM	12:00 AM
+fmt	45356.75	h:mm A/P	6:00 P
+fmt	45356.25	yyyy-mm-dd hh:mm	2024-03-05 06:00
+fmt	45356.000005787035	yyyy-mm-dd hh:mm:ss.000	2024-03-05 00:00:00.500
+fmt	45356.000005787035	yyyy-mm-dd hh:mm:ss.0	2024-03-05 00:00:00.5
+fmt	1	yyyy-mm-dd	1900-01-01
+fmt	59	yyyy-mm-dd	1900-02-28
+fmt	60	yyyy-mm-dd	1900-03-01
+fmt	61	yyyy-mm-dd	1900-03-01
+fmt	45292.5	yyyy-mm-dd hh:mm:ss	2024-01-01 12:00:00
+fmt	1234.5	0.00E+00	1234.5
+fmt	1234.5	[h]:mm	1234.5
+fmt	1234.5	@	1234.5
+fmt	1234.5	mmmmm	1234.5
+fmt	1234.5	yyyyy	1234.5
+fmt	1234.5	# ?/?	1234.5
+fmt	1234.5	0;0;0;0;0	1234.5
+fmt	1234.5	General	1234.5
+fmt	1234.5	general	1234.5
+fmt	1234.5		1234.5
+fmt	1234.5	   	1234.5
+fmt	1234.5	<null>	1234.5
+fmt	-1	yyyy-mm-dd	-1
+fmt	NaN	yyyy-mm-dd	NaN
+fmt	Infinity	yyyy-mm-dd	Infinity
+fmt	1E+30	yyyy-mm-dd	1E+30
+fmt	NaN	#,##0.00	NaN
+fmt	Infinity	#,##0.00	Infinity
+fmt	1E+30	#,##0.00	1E+30
+gen	0	-	0
+gen	-0	-	-0
+gen	0.30000000000000004	-	0.3
+gen	1234.5	-	1234.5
+gen	0.3333333333333333	-	0.333333333333333
+gen	1000000000000000	-	1E+15
+gen	1E-05	-	1E-05
+gen	999999999999999	-	999999999999999
+gen	1.2345678901234568E+18	-	1.23456789012346E+18
+gen	1E+30	-	1E+30
+gen	1.5E-07	-	1.5E-07
+gen	NaN	-	NaN
+gen	Infinity	-	Infinity
+gen	-Infinity	-	-Infinity
+gen	0.0001	-	0.0001
+gen	100	-	100
+gen	100000000000000	-	100000000000000

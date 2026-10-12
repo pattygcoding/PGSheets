@@ -1,0 +1,16 @@
+[package]
+name = "pgsheets-core"
+description = "Sparse workbook model: addressing, typed values, undo history and number formats."
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+# No dependencies: the model, the number-format interpreter and the serial-date codec are pure logic
+# and are deliberately free of both the UI framework and the file-format crates.
+[dependencies]

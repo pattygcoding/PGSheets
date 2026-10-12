@@ -1,0 +1,20 @@
+[package]
+name = "pgsheets-sheet"
+description = "The sparse workbook: one mutation point, undo history and formula-aware paste."
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+pgsheets-core = { path = "../pgsheets-core" }
+
+# The model sits above the formula crate rather than inside `core`, because a structural edit has to
+# rewrite every formula on the sheet, and the rewriter needs the parser. The crate boundary is what
+# the C# `ICellStore` / `IExportSource` interfaces achieved by convention.
+pgsheets-formulas = { path = "../pgsheets-formulas" }

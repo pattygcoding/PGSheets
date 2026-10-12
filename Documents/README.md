@@ -5,7 +5,7 @@ dependency-tracking formula engine with **83 functions**, number formats, and th
 edit and save **`.xlsx`** and **`.csv`** files with no third-party spreadsheet library involved.
 
 It is deliberately offline. There are no online API calls, no accounts, no telemetry and no
-runtime downloads: the only network access in the whole project is the one-time NuGet restore when
+runtime downloads: the only network access in the whole project is the one-time `cargo` restore when
 you build it.
 
 ## Where to start
@@ -26,8 +26,8 @@ you build it.
 ## A sixty-second tour
 
 ```powershell
-dotnet build PGSheets.sln -c Release
-dotnet run   --project src/PGSheets
+cd rust
+cargo run -p pgsheets-app
 ```
 
 The window opens with a small sample table already filled in. Now try this:

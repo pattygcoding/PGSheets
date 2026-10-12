@@ -1,0 +1,37 @@
+[package]
+name = "pgsheets-app"
+description = "The PGSheets desktop application: virtualised grid and window."
+publish = false
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "pgsheets"
+path = "src/main.rs"
+
+[lib]
+name = "pgsheets_app"
+path = "src/lib.rs"
+
+[dependencies]
+pgsheets-core = { path = "../pgsheets-core" }
+pgsheets-formulas = { path = "../pgsheets-formulas" }
+pgsheets-io = { path = "../pgsheets-io" }
+pgsheets-sheet = { path = "../pgsheets-sheet" }
+
+# `rfd` is the platform's own file and message dialogs, and nothing else: it draws no UI of its own, so
+# the window stays `eframe`'s. The GTK backend is left off, which is why Linux goes through the XDG
+# portal rather than linking a toolkit.
+rfd = { version = "0.15", default-features = false, features = ["xdg-portal"] }
+
+# The only UI dependency. `glow` (OpenGL) rather than the default `wgpu` backend keeps the dependency
+# tree and the binary small; `default_fonts` is embedded in the crate, so unlike a node/webview based
+# UI there is still no runtime download; `accesskit`, `links` and the persistence stack are left off.
+eframe = { version = "0.36", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
