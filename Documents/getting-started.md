@@ -41,14 +41,15 @@ can copy elsewhere.
 
 ## What you see when it opens
 
-The window is a menu bar, a formatting toolbar, a name box and formula bar, the grid, a status bar,
-and scroll bars.
+The window is a menu bar, a ribbon, a name box and formula bar, the grid, a strip of sheet tabs, a
+status bar, and scroll bars.
 
 ```
 +--------------------------------------------------------------+
 | File  Edit  Sheet                                            |  menu
 +--------------------------------------------------------------+
-| B  I  U | Left Center Right | Wrap | [colour] [Default]      |  formatting toolbar
+| History  | Clipboard       | Font                | Alignment    | Number  |  ribbon
+| Undo Redo| Paste Cut Copy  | B I U [col][fill]   | [align] Wrap | General |
 +--------------------------------------------------------------+
 |  B2          |  =B2+C2                                       |  name box + formula bar
 +--------------------------------------------------------------+
@@ -91,8 +92,9 @@ formula you typed is still a formula after a save.
 - `.xlsx` and `.xlsm` (Excel workbooks)
 - `.csv`, `.tsv` and `.txt` (delimited text)
 
-Only the **first worksheet** of a workbook is read; the others are reported in the status bar as a
-warning rather than silently ignored. See [files.md](files.md) for what is read from each kind.
+**Every worksheet** of a workbook is read, and appears as a tab along the bottom. A sheet that is not a
+worksheet — a chartsheet or a macro sheet — cannot be shown as cells, so it is reported in the status
+bar as a warning rather than silently ignored. See [files.md](files.md) for what is read from each kind.
 
 If the sheet on screen has unsaved changes, opening another file asks first.
 
@@ -103,12 +105,12 @@ If the sheet on screen has unsaved changes, opening another file asks first.
 | **Ctrl+S** (File → Save) | Writes back to the file you opened. The first time, it asks for a name — as does any file that cannot be written back in full. |
 | **Ctrl+Shift+S** (File → Save As) | Always asks, and lets you choose `.xlsx` (the default), `.csv` or `.tsv`. |
 
-Two cases send **Ctrl+S** to Save As instead of overwriting, both because writing in place truncates
-the file:
+Two cases send **Ctrl+S** to Save As instead of overwriting:
 
 - **A macro-enabled `.xlsm` file**, because a VBA project cannot be written.
-- **A workbook with more than one worksheet**, because only one is written — overwriting would
-  destroy the sheets that were never loaded.
+- **A workbook that holds a chartsheet or a macro sheet**, because such a sheet has no cells to hold
+  and would be destroyed by a save. Every *worksheet* is written, so an ordinary multi-sheet workbook
+  saves in place.
 
 The title bar reads `PGSheets - Untitled` and gains a `*` while there are unsaved changes, and
 closing or replacing the document prompts to save first.

@@ -1,7 +1,7 @@
 # PGSheets documentation
 
 PGSheets is a cross-platform spreadsheet for the desktop: a virtualised grid you can type in, a
-dependency-tracking formula engine with **83 functions**, number formats, and the ability to open,
+dependency-tracking formula engine with **100 functions**, number formats, and the ability to open,
 edit and save **`.xlsx`** and **`.csv`** files with no third-party spreadsheet library involved.
 
 It is deliberately offline. There are no online API calls, no accounts, no telemetry and no
@@ -17,7 +17,7 @@ you build it.
 | Move around a sheet and select things | [using-the-grid.md](using-the-grid.md) |
 | Type, undo, copy, and insert or delete rows | [editing.md](editing.md) |
 | Write formulas and understand errors | [formulas.md](formulas.md) |
-| Look up one of the 83 functions | [functions.md](functions.md) |
+| Look up one of the 100 functions | [functions.md](functions.md) |
 | Show `0.0%`, `$1,234.57` or a date | [number-formats.md](number-formats.md) |
 | Open and save files, and know what survives | [files.md](files.md) |
 | Know what is *not* built yet | [limitations.md](limitations.md) |

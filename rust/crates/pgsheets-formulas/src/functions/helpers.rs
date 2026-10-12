@@ -72,6 +72,23 @@ pub(crate) fn try_integer(
     Ok(number.round().clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32)
 }
 
+/// Evaluates an optional integer argument, returning `default` when it was not supplied.
+///
+/// The lookup modes and the text-splitting options all have a documented default, so reading them
+/// through here keeps every function from repeating the ``if arguments.len() > index`` dance.
+pub(crate) fn optional_integer(
+    arguments: &[AstNode],
+    index: usize,
+    context: &mut dyn FormulaContext,
+    default: i32,
+) -> Result<i32, CellValue> {
+    if index < arguments.len() {
+        try_integer(arguments, index, context)
+    } else {
+        Ok(default)
+    }
+}
+
 /// Evaluates an argument and returns its text, using the display form of a number.
 pub(crate) fn try_text(
     arguments: &[AstNode],

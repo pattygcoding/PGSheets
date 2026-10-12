@@ -1,6 +1,6 @@
 # Function reference
 
-**83 functions**, in the categories below. Arguments in `[square brackets]` are optional.
+**100 functions**, in the categories below. Arguments in `[square brackets]` are optional.
 
 Two things are true of every function here:
 
@@ -13,7 +13,7 @@ An aggregate — `SUM`, `MIN`, `AVERAGE`, `MEDIAN`, `STDEV` and the rest — **s
 inside a range rather than counting them as zero, and returns an error if any cell in the range holds
 one. `COUNT` counts numbers; `COUNTA` counts anything non-empty.
 
-## Numbers (19)
+## Numbers (21)
 
 | Function | Returns |
 |---|---|
@@ -36,10 +36,12 @@ one. `COUNT` counts numbers; `COUNTA` counts anything non-empty.
 | `ROUNDDOWN(number, [digits])` | Towards zero, always |
 | `CEILING(number, [significance])` | Up to the next multiple of the significance (1 by default): `CEILING(2.3,0.5)` is `2.5` |
 | `FLOOR(number, [significance])` | Down to the previous multiple: `FLOOR(2.7,0.5)` is `2.5` |
+| `RAND()` | A fresh random fraction in `[0, 1)`, seeded from the clock |
+| `RANDBETWEEN(bottom, top)` | A whole number in the inclusive range; `#NUM!` when `bottom` exceeds `top` |
 
 `INT`, `TRUNC` and `ROUNDDOWN` are worth telling apart: for `-2.9` they give `-3`, `-2` and `-2`.
 
-## Statistics (17)
+## Statistics (22)
 
 | Function | Returns |
 |---|---|
@@ -58,6 +60,17 @@ one. `COUNT` counts numbers; `COUNTA` counts anything non-empty.
 | `STDEV(value, …)` | Sample standard deviation; `#DIV/0!` with fewer than two numbers |
 | `VAR(value, …)` | Sample variance |
 | `SUMPRODUCT(range, range, …)` | Multiplies the ranges cell by cell and adds; `#VALUE!` if they differ in size |
+| `COUNTIFS(range, criteria, …)` | How many rows satisfy **every** range/criteria pair |
+| `SUMIFS(sumRange, range, criteria, …)` | Adds the rows that satisfy every pair |
+| `AVERAGEIFS(avgRange, range, criteria, …)` | Averages the rows that satisfy every pair; `#DIV/0!` when none do |
+| `MAXIFS(maxRange, range, criteria, …)` | The largest matching value; `0` when none match |
+| `MINIFS(minRange, range, criteria, …)` | The smallest matching value; `0` when none match |
+
+The `…IFS` functions take a leading **result range** and then any number of `range, criteria` pairs.
+Every range must cover the same cells as the result range — a mismatched pair would silently line up
+the wrong ones — and that is reported as `#VALUE!` rather than guessed at. `COUNTIFS` has no result
+range of its own; it starts with the first `range, criteria` pair. Each criteria is the same one
+`COUNTIF` accepts (see below).
 
 ### Criteria
 
@@ -108,7 +121,7 @@ from a range** rather than treating them as false. With nothing to test at all t
 =IFS(A1>90,"A",A1>80,"B",TRUE,"C")
 ```
 
-## Text (18)
+## Text (23)
 
 A number used where text is wanted is read through its display form, so `LEN(1234)` is `4` and
 `LEFT(1234,2)` is `"12"`.
@@ -127,12 +140,24 @@ A number used where text is wanted is read through its display form, so `LEN(123
 | `REPT(text, count)` | The text repeated; `#VALUE!` if the result would be too long for a cell |
 | `SUBSTITUTE(text, old, new, [instance])` | Every occurrence replaced, or only the n-th |
 | `FIND(find, within, [start])` | The 1-based position, **case sensitive**; `#VALUE!` when absent |
+| `SEARCH(find, within, [start])` | The same, but **case insensitive** and honouring `*` and `?` |
+| `REPLACE(text, start, length, new)` | The run of characters from `start` replaced by `new` |
+| `TEXTBEFORE(text, delimiter, [instance], [matchMode], [matchEnd], [ifNotFound])` | The part before the delimiter |
+| `TEXTAFTER(text, delimiter, [instance], [matchMode], [matchEnd], [ifNotFound])` | The part after the delimiter |
+| `TEXT(value, format)` | The number rendered with a number-format code |
 | `EXACT(a, b)` | `TRUE` when identical **including case** — the one text comparison that cares |
 | `VALUE(text)` | Text read as a number; `#VALUE!` when it is not one |
 | `CHAR(code)` | The character for a code in 1–255 |
 | `CODE(text)` | The code of the first character |
 
-## Lookup (4)
+`SEARCH` and the two split functions understand the `*` (any run) and `?` (one character) wildcards,
+with `~` escaping the next character. `TEXTBEFORE`/`TEXTAFTER` count occurrences from the start when
+`instance` is positive and from the end when it is negative; `matchMode` `1` ignores case; and
+`matchEnd` `1` treats the end of the text as a delimiter, so a missing one yields the whole string
+rather than `#N/A`. `TEXT`'s format code is the same language a cell's own number format uses, so a
+code the interpreter cannot represent falls back to the plain rendering.
+
+## Lookup (9)
 
 A lookup that finds nothing returns **`#N/A`**, which is exactly what `IFERROR` and `IFNA` are for.
 An index outside the table is `#REF!`, and a table that is not a range is `#VALUE!`.
@@ -143,6 +168,10 @@ An index outside the table is `#REF!`, and a table that is not a range is `#VALU
 | `HLOOKUP(key, range, row, [approximate])` | The same, across a row |
 | `INDEX(range, row, [column])` | One cell of a range, 1-based; a single-row range reads a lone index as the column |
 | `MATCH(key, range, [type])` | The 1-based position within a single row or column |
+| `LOOKUP(key, lookupVector, [resultVector])` | The approximate lookup over a sorted vector; the last entry at or below the key |
+| `XLOOKUP(key, lookupArray, returnArray, [ifNotFound], [matchMode], [searchMode])` | The matching entry, or the fallback instead of `#N/A` |
+| `XMATCH(key, lookupArray, [matchMode], [searchMode])` | The 1-based position, with the same modes |
+| `ROWS(range)` / `COLUMNS(range)` | How many rows / columns a range covers (a single cell is `1`) |
 
 The fourth argument of `VLOOKUP` and `HLOOKUP` decides the search:
 
@@ -153,6 +182,12 @@ The fourth argument of `VLOOKUP` and `HLOOKUP` decides the search:
 
 `MATCH` takes the type in the same spirit: `0` for exact, `1` for a list sorted ascending, `-1` for
 one sorted descending.
+
+`XLOOKUP` and `XMATCH` share two mode arguments. `matchMode` `0` (the default) matches exactly, `-1`
+takes the next smaller value, `1` the next larger, and `2` reads the key as a wildcard pattern.
+`searchMode` scans forwards when positive (the default) and backwards when negative. Both arrays must
+be the same size and lie along a single row or column, and `XLOOKUP` reads the result from the
+matching offset of its return array.
 
 ```
 =VLOOKUP($A2,$B$2:$C$20,2,FALSE)     exact lookup, anchored table
@@ -198,7 +233,7 @@ These **look at** a value instead of propagating it, so `ISERROR(1/0)` is `TRUE`
 
 ## The total
 
-19 numbers + 17 statistics + 13 logic + 18 text + 4 lookup + 4 dates + 8 type tests = **83**.
+21 numbers + 22 statistics + 13 logic + 23 text + 9 lookup + 4 dates + 8 type tests = **100**.
 
 For what is deliberately *not* here, and why, see [limitations.md](limitations.md).
 

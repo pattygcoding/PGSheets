@@ -93,6 +93,8 @@ fn register_math(library: &mut FunctionLibrary) {
     library.register("FLOOR", math::floor);
     library.register("CONCAT", math::concat);
     library.register("CONCATENATE", math::concat);
+    library.register("RAND", math::rand);
+    library.register("RANDBETWEEN", math::rand_between);
 }
 
 fn register_statistics(library: &mut FunctionLibrary) {
@@ -107,6 +109,11 @@ fn register_statistics(library: &mut FunctionLibrary) {
     library.register("COUNTIF", conditional::count_if);
     library.register("SUMIF", conditional::sum_if);
     library.register("AVERAGEIF", conditional::average_if);
+    library.register("COUNTIFS", conditional::count_ifs);
+    library.register("SUMIFS", conditional::sum_ifs);
+    library.register("AVERAGEIFS", conditional::average_ifs);
+    library.register("MAXIFS", conditional::max_ifs);
+    library.register("MINIFS", conditional::min_ifs);
     library.register("LARGE", stats::large);
     library.register("SMALL", stats::small);
     library.register("RANK", stats::rank);
@@ -144,6 +151,11 @@ fn register_text(library: &mut FunctionLibrary) {
     library.register("REPT", text::rept);
     library.register("SUBSTITUTE", text::substitute);
     library.register("FIND", text::find);
+    library.register("SEARCH", text::search);
+    library.register("REPLACE", text::replace);
+    library.register("TEXTBEFORE", text::text_before);
+    library.register("TEXTAFTER", text::text_after);
+    library.register("TEXT", text::text_format);
     library.register("EXACT", text::exact);
     library.register("VALUE", text::value);
     library.register("CHAR", text::character);
@@ -153,8 +165,13 @@ fn register_text(library: &mut FunctionLibrary) {
 fn register_lookup(library: &mut FunctionLibrary) {
     library.register("VLOOKUP", lookup::v_look_up);
     library.register("HLOOKUP", lookup::h_look_up);
+    library.register("LOOKUP", lookup::look_up);
+    library.register("XLOOKUP", lookup::x_look_up);
     library.register("INDEX", lookup::index);
     library.register("MATCH", lookup::match_value);
+    library.register("XMATCH", lookup::x_match);
+    library.register("ROWS", lookup::rows);
+    library.register("COLUMNS", lookup::columns);
 }
 
 impl FunctionLibrary {

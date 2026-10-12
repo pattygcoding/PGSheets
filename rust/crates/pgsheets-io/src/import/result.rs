@@ -14,17 +14,26 @@ pub struct ImportResult {
     /// Human-readable warnings: unsupported functions, truncated ranges, and so on.
     pub warnings: Vec<String>,
 
-    /// Name of the sheet or table that was imported, when the format has one.
+    /// Name of the sheet or table that was imported, when the format has one. The first worksheet,
+    /// for a document that holds several.
     pub sheet_name: Option<String>,
+
+    /// Every worksheet imported, in the order the document listed them.
+    pub sheet_names: Vec<String>,
 
     /// How many non-empty cells were written to the sink.
     pub cells_imported: i32,
 
     /// How many worksheets the source document held.
     ///
-    /// Saving writes a single worksheet, so a caller that sees more than one here must not write back
-    /// over the original file: it would destroy every sheet that was never loaded.
+    /// Every worksheet is imported, so this is the number of sheets the document is expected to write
+    /// back. What blocks writing over the original is [`ImportResult::dropped_sheets`], not this.
     pub worksheet_count: i32,
+
+    /// How many sheets the document held that are not worksheets — chartsheets, macro sheets and the
+    /// like. Such a sheet cannot be represented here, so saving must not write over the file: doing so
+    /// would destroy it.
+    pub dropped_sheets: i32,
 }
 
 impl Default for ImportResult {
@@ -41,8 +50,10 @@ impl ImportResult {
             columns: 0,
             warnings: Vec::new(),
             sheet_name: None,
+            sheet_names: Vec::new(),
             cells_imported: 0,
-            worksheet_count: 1,
+            worksheet_count: 0,
+            dropped_sheets: 0,
         }
     }
 

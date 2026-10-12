@@ -54,6 +54,8 @@ pub fn parse(text: &str, sink: &mut dyn ImportSink) -> ImportResult {
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let delimiter = detect_delimiter(text);
 
+    sink.begin_sheet("Sheet1");
+
     let mut row = 0;
     let mut column = 0;
     let mut max_column = 0;
@@ -122,6 +124,11 @@ pub fn parse(text: &str, sink: &mut dyn ImportSink) -> ImportResult {
         rows += 1;
     }
 
+    sink.end_sheet();
+
+    result.sheet_name = Some("Sheet1".to_string());
+    result.sheet_names = vec!["Sheet1".to_string()];
+    result.worksheet_count = 1;
     result.rows = rows;
     result.columns = max_column;
     result.cells_imported = cells;

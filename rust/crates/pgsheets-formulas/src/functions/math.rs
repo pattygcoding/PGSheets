@@ -299,3 +299,60 @@ pub(super) fn concat(arguments: &[AstNode], context: &mut dyn FormulaContext) ->
 
     CellValue::text(&text)
 }
+
+/// `RAND()` — a fresh random fraction in `[0, 1)`.
+///
+/// The value is seeded from the system clock rather than from a stored generator, so the function
+/// keeps nothing between calls; two calls made in the very same instant can therefore agree.
+pub(super) fn rand(arguments: &[AstNode], _context: &mut dyn FormulaContext) -> CellValue {
+    if arguments.is_empty() {
+        CellValue::number(random_fraction())
+    } else {
+        CellValue::error(CellError::Value)
+    }
+}
+
+/// `RANDBETWEEN(bottom, top)` — a whole number in the inclusive range, `bottom` no greater than `top`.
+pub(super) fn rand_between(arguments: &[AstNode], context: &mut dyn FormulaContext) -> CellValue {
+    if arguments.len() != 2 {
+        return CellValue::error(CellError::Value);
+    }
+
+    let bottom = match try_integer(arguments, 0, context) {
+        Ok(bottom) => bottom,
+        Err(error) => return error,
+    };
+
+    let top = match try_integer(arguments, 1, context) {
+        Ok(top) => top,
+        Err(error) => return error,
+    };
+
+    if bottom > top {
+        return CellValue::error(CellError::Number);
+    }
+
+    let span = i64::from(top) - i64::from(bottom) + 1;
+    let offset = (random_fraction() * span as f64).floor() as i64;
+
+    CellValue::number((i64::from(bottom) + offset.min(span - 1)) as f64)
+}
+
+/// A random fraction in `[0, 1)`, mixed from the clock so that no state is kept between calls.
+fn random_fraction() -> f64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or(0);
+
+    // SplitMix64's finaliser, which spreads the clock's low-order bits across all of them.
+    let mut mixed = (nanos as u64).wrapping_add(0x9E37_79B9_7F4A_7C15);
+    mixed = (mixed ^ (mixed >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    mixed = (mixed ^ (mixed >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    mixed ^= mixed >> 31;
+
+    // The top 53 bits are the ones an `f64` mantissa can hold exactly.
+    (mixed >> 11) as f64 / (1u64 << 53) as f64
+}

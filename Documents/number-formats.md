@@ -135,10 +135,10 @@ decimal points by inserting spaces.
 | Saving `.csv` / `.tsv` / `.txt` | No — delimited text holds values only |
 | Copy and paste | No — the clipboard carries text, and pasting must not reformat what it lands on |
 
-Everything **else** about a cell's style — fonts (family and size), borders, the cell fill, merged
-cells and column widths — is not read or written at all. The one other thing that does round-trip is
-the set of simple text styles the toolbar sets: **bold**, *italic*, underline, horizontal alignment,
-text colour and wrap. So a cell that was bold comes back bold, and a cell that was bold *and* a
-percentage comes back bold and still a percentage.
+Everything **else** about a cell's style — fonts (family and size), borders, merged cells and column
+widths — is not read or written at all. The one other thing that does round-trip is the set of simple
+styles the ribbon sets: **bold**, *italic*, underline, horizontal alignment, text colour, the background
+fill and wrap. So a cell that was bold comes back bold, and a cell that was bold *and* a percentage comes
+back bold and still a percentage.
 
 Next: [files.md](files.md) for what opening and saving does to your data.

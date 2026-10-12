@@ -9,6 +9,8 @@
 pub mod app;
 pub mod files;
 pub mod grid;
+pub mod palette;
+pub mod ribbon;
 
 use eframe::egui;
 
@@ -16,6 +18,9 @@ use eframe::egui;
 ///
 /// This is the whole of the binary: everything else lives in the library so that the parts worth
 /// testing are reachable from `tests/`.
+///
+/// The palette is read from the user's configuration here rather than in `Default`, so a test that
+/// builds a window starts from an empty palette and never touches the real one.
 pub fn run() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -28,6 +33,11 @@ pub fn run() -> eframe::Result<()> {
     eframe::run_native(
         "PGSheets",
         options,
-        Box::new(|_context| Ok(Box::new(app::PgSheetsApp::default()))),
+        Box::new(|_context| {
+            let mut app = app::PgSheetsApp::default();
+            app.load_palette();
+
+            Ok(Box::new(app))
+        }),
     )
 }

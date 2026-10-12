@@ -29,14 +29,25 @@ deliberate: it is what makes "format the column, then fill it in" work.
 
 ## Formatting a cell
 
-The toolbar above the formula bar sets how the selection **looks**, without touching what it holds.
+The ribbon above the formula bar sets how the selection **looks**, without touching what it holds. Its
+controls are gathered into labelled groups — **History**, **Clipboard**, **Font**, **Alignment** and
+**Number** — the way a spreadsheet's ribbon is.
 
-| Button | Effect |
+| Control | Effect |
 |---|---|
+| **Undo** / **Redo** | Step the history backwards or forwards |
+| **Paste** / **Cut** / **Copy** | The clipboard commands, applied to the selection |
 | **B** / *I* / U | Bold, italic, underline |
-| Left / Center / Right | Horizontal alignment |
+| Left / Centre / Right icons | Horizontal alignment — the four ragged lines a spreadsheet shows |
 | Wrap | Wraps the text to the column's width |
-| Colour | The text colour, and **Default** to clear it |
+| Text colour | Opens the colour menu; **Automatic** clears it |
+| Fill | The cell's background colour; **No fill** clears it |
+
+The colour menu is shared by both colour controls and has four parts: a grid of **basic colours**, the
+ones **recently used** (most recent first, this session), the ones you **saved**, and **More colours**
+for anything else. Saving a colour keeps it for good; a saved colour can be removed from the same menu,
+where the button reads **Remove from saved** while the active cell already carries it.
+| **Number** (dropdown) | The number format — General, `0.00`, `#,##0.00`, `0%`, `$#,##0.00`, dates and more |
 
 Two things follow the way a spreadsheet behaves:
 

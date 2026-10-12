@@ -155,6 +155,9 @@ pub struct RecordingSink {
 
     /// The style of every cell, by address.
     pub styles: HashMap<CellAddress, CellStyle>,
+
+    /// Every worksheet the reader announced, in order.
+    pub sheets: Vec<String>,
 }
 
 impl RecordingSink {
@@ -215,6 +218,10 @@ impl ImportSink for RecordingSink {
     fn set_cell_style(&mut self, row: i32, column: i32, style: Option<&CellStyle>) {
         self.styles
             .insert(CellAddress::new(row, column), style.copied().unwrap_or_default());
+    }
+
+    fn begin_sheet(&mut self, name: &str) {
+        self.sheets.push(name.to_string());
     }
 }
 

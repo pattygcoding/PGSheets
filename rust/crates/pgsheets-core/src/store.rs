@@ -43,6 +43,15 @@ pub trait ImportSink {
     /// Like [`ImportSink::set_number_format`], a separate call because the style arrives with the
     /// cell's formatting rather than with its content, and most sinks have no use for it.
     fn set_cell_style(&mut self, row: i32, column: i32, style: Option<&CellStyle>);
+
+    /// Called before the cells of a worksheet, so a sink that holds several can tell them apart.
+    ///
+    /// The default does nothing, which is what a sink that only ever sees one sheet wants. A reader
+    /// that can produce more than one sheet calls this and [`ImportSink::end_sheet`] around each.
+    fn begin_sheet(&mut self, _name: &str) {}
+
+    /// Called after the last cell of a worksheet.
+    fn end_sheet(&mut self) {}
 }
 
 /// The minimal read-only view of cell storage that exporters need.

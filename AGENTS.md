@@ -19,7 +19,7 @@ spreadsheet library — see [the ADR](Documents/adr/0001-rust-rewrite.md) for ho
 | UI framework | `eframe`/`egui` 0.36, immediate mode | "One control painting every visible cell in one pass" is what immediate mode *is* |
 | Dependencies | `eframe`, `zip`, `quick-xml`, `rfd` | `std` has neither a zip container nor an XML reader, and neither of the last two is a spreadsheet library |
 | File formats | ours | Every OOXML part, content type, relationship, style-table entry and cell serialisation, and both CSV codecs, are written here |
-| Cell formatting | number formats, bold/italic/underline, horizontal alignment, text colour and wrap | Rendered on the grid, stored on the cell, and round-tripped through the style table. Everything else a style carries — fonts, borders, fills, merged cells, widths — is dropped |
+| Cell formatting | number formats, bold/italic/underline, horizontal alignment, text colour, background fill and wrap | Rendered on the grid, stored on the cell, and round-tripped through the style table. Everything else a style carries — fonts, borders, merged cells, widths — is dropped |
 
 There are no online API calls, API keys, telemetry or quota-limited services anywhere in the app. The
 only network access is one-time `cargo` restore at build time.
@@ -87,7 +87,7 @@ prefix, and it bypasses the execution policy for that one run.
 
 ## Testing
 
-260 tests, all headless — no display, no window, no dependence on the working directory. Each crate
+291 tests, all headless — no display, no window, no dependence on the working directory. Each crate
 owns its own suite:
 
 | Suite | Covers |
@@ -106,14 +106,18 @@ Three things worth knowing before adding tests:
   window, which is what covers the single editor, the clipboard round trip, undo and the
   unsaved-changes question. `file_tests.rs` is the only suite that puts a file on disk; each test gets a
   directory of its own under the system temp dir and removes it afterwards.
-- **egui has four behaviours that cost time to learn**, all of them by design and none of them
+- **egui has five behaviours that cost time to learn**, all of them by design and none of them
   documented where you would look: modifiers are tracked only from `Event::ModifiersChanged` (a `Key`
   event carries them but does not set the state); a drag is recognised only *after* the pointer has
   moved, so a selection grows from the press origin rather than from where the pointer has reached; a
   second press of a key with no release counts as auto-repeat and is ignored, so synthetic keys need
-  their releases; and **unmodified arrow and Tab presses are consumed by egui for its own widget-focus
+  their releases; **unmodified arrow and Tab presses are consumed by egui for its own widget-focus
   navigation**, which is why the grid re-takes the keyboard every frame the window says it owns it, and
-  why the formula bar is a label until it is clicked.
+  why the formula bar is a label until it is clicked; and **the clipboard chords arrive as their own
+  events** — the platform backend turns Ctrl+X, Ctrl+C and Ctrl+V into `Event::Cut`, `Event::Copy` and
+  `Event::Paste` and never emits the `Key`, so a window that listens for `Key::C` watches the wrong
+  thing. A synthetic test must send the same events the platform does, or it passes against a code path
+  that does not exist on a real desktop.
 - **Two suites compare against frozen golden output**, `include_str!`-ed so they depend on no working
   directory: the format interpreter (89 cases) and a fixed sheet with 243 formulas covering every
   function and its error branches. The format one caught a real defect the first time it ran — `0.5`
@@ -161,12 +165,13 @@ These are load-bearing. Breaking one silently degrades correctness or performanc
 12. **Formulas are stored as text and are the source of truth.** `CellData::raw_input` holds exactly
     what was typed, so saving never rewrites a formula. Programmatic changes go through the rewriter and
     the writer, and a formula that cannot be parsed is left untouched rather than guessed at.
-13. **A document the app cannot write back in full is never overwritten in place.** `Save` writes one
-    worksheet and truncates the target, so a workbook that held more — or a name no writer claims —
-    goes to `Save As`. `SheetExporter::can_save_in_place` is the one place that decides, and the loss is
-    reported through `describe_lost_worksheets` rather than left to be discovered. A save also writes a
-    sibling `.name.saving` file and moves it into place, so a writer that fails halfway cannot truncate
-    the file that was already there.
+13. **A document the app cannot write back in full is never overwritten in place.** Every worksheet is
+    read and every worksheet is written, so a workbook of many sheets saves as readily as one of a
+    single sheet; a workbook that holds a sheet this app cannot represent — a chartsheet or a macro
+    sheet — or a name no writer claims, goes to `Save As`. `SheetExporter::can_save_in_place` is the one
+    place that decides, and the loss is reported through `describe_lost_sheets` rather than left to be
+    discovered. A save also writes a sibling `.name.saving` file and moves it into place, so a writer
+    that fails halfway cannot truncate the file that was already there.
 
 ## Extension points
 
@@ -178,7 +183,10 @@ These are load-bearing. Breaking one silently degrades correctness or performanc
   matching and criterion parsing live in `functions/helpers.rs`, `functions/wildcards.rs` and
   `functions/criteria.rs` — reuse those rather than re-deriving them.
 - **New file format**: implement `SpreadsheetImporter` and add one line to `ImporterRegistry::standard`.
+  A reader that can produce several worksheets announces each with `ImportSink::begin_sheet`/`end_sheet`.
 - **New save format**: implement `SpreadsheetExporter` and add one line to `SheetExporter::standard`.
+  The single-sheet `export` is enough for a format with one table; a format that can carry several
+  worksheets overrides `export_workbook`, which is handed every named sheet.
 - **New engine**: implement `FormulaEngine` and pass it to `Workbook::new`.
 
 ## Conventions
@@ -189,16 +197,24 @@ These are load-bearing. Breaking one silently degrades correctness or performanc
 - Tests stay headless and depend on no working directory.
 - Numeric parsing and formatting is deterministic and testable, and deliberately independent of the
   machine's locale.
+- The window's pieces live in their own modules: the grid in `grid/`, the ribbon and its colour menus in
+  `ribbon.rs`, and the palette in `palette.rs`. The ribbon holds no document state — a control returns
+  what it means and the window runs it.
+- The only thing the app keeps on disk outside a document is the colours the user saved, in a small text
+  file under the user's configuration. Nothing else writes there, and the recently used list is per
+  session, so applying a colour never touches the disk.
 
 ## Known limitations (intentional, not bugs)
 
-- One worksheet is imported (the first). Multi-sheet tabs are not implemented, and a workbook with more
-  than one sheet is never saved over in place — see invariant 13.
+- **Several worksheets are supported**, with a tab per sheet and `+`/`-` to add and remove one, and
+  every worksheet is read from and written to `.xlsx`. A sheet that is not a worksheet — a chartsheet
+  or a macro sheet — is not imported, and a workbook that holds one is never saved over in place, so
+  the unrepresentable sheet is not destroyed — see invariant 13.
 - **Number formats and the simple text styles round-trip; the rest of a style does not.** A number format
-  code, and bold, italic, underline, horizontal alignment, text colour and wrap, are read from the style
-  table on import and written back on export. Fonts (family and size), borders, the cell fill, merged
-  cells and column widths are not read or written at all, so a cell with a custom font or a border comes
-  back in the default face with no border.
+  code, and bold, italic, underline, horizontal alignment, text colour, the background fill and wrap, are
+  read from the style table on import and written back on export. Fonts (family and size), borders,
+  merged cells and column widths are not read or written at all, so a cell with a custom font or a border
+  comes back in the default face with no border.
 - **A CSV export carries no style.** A `.csv`/`.tsv` file has nowhere to put a number format or a style,
   so both are lost on a text save — the same loss the format warnings already describe.
 - **Wrap has no column of its own.** A wrapped cell wraps to its column's width, but rows are still a
@@ -222,9 +238,9 @@ These are load-bearing. Breaking one silently degrades correctness or performanc
   fractions, elapsed time (`[h]:mm`), alignment fills and text sections fall back to the plain
   rendering rather than being approximated. The code is still read and written back unchanged, so a
   format this app cannot render survives a round trip intact. `?` padding is not reproduced either.
-- The function library covers the common ground, not the long tail: there is no `LOOKUP`/`XLOOKUP`, no
-  `TEXT`/`SEARCH`/`TEXTBEFORE`, and no array or spill semantics — `SUMPRODUCT` needs equally sized
-  ranges rather than broadcasting a smaller one across a larger.
+- The function library covers the common ground, not the long tail: there is no array or spill
+  semantics — every function works cell by cell — and `SUMPRODUCT` needs equally sized ranges rather
+  than broadcasting a smaller one across a larger. `DATE`, `TODAY` and `NOW` are absent on purpose.
 - A lookup reports a miss as `#N/A`; nothing else produces that code, so `IFNA` only ever catches a
   lookup and `ISNA` is only ever true for one.
 - Structural edits rewrite the whole sheet, so inserting a row costs O(populated cells) rather than

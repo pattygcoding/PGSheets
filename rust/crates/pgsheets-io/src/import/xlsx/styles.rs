@@ -21,22 +21,46 @@ pub struct CellFormat {
     pub style: CellStyle,
 }
 
-/// One `<xf>`: the font and number format it refers to, and any alignment it carries.
+/// One `<xf>`: the font, fill and number format it refers to, and any alignment it carries.
 #[derive(Clone, Copy, Debug, Default)]
 struct XfRecord {
     num_fmt_id: Option<i32>,
     font_id: i32,
+    fill_id: i32,
     align: HorizontalAlign,
     wrap: bool,
 }
 
 /// The section of the part that is currently open, so a bare element can be attributed to it.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
 enum Section {
+    #[default]
     Other,
     NumFmts,
     Fonts,
+    Fills,
     CellXfs,
+}
+
+/// Everything one walk of the style part collects, including the record currently open.
+#[derive(Default)]
+struct Collected {
+    custom: HashMap<i32, String>,
+    fonts: Vec<CellStyle>,
+    fills: Vec<Option<[u8; 3]>>,
+    xfs: Vec<XfRecord>,
+
+    /// The `<font>` currently open, or `None`.
+    font: Option<CellStyle>,
+
+    /// The `<fill>` currently open: the outer `Some` while it is open, the inner value the colour found
+    /// inside it, which is `None` for a pattern that paints nothing.
+    fill: Option<Option<[u8; 3]>>,
+
+    /// The `<xf>` currently open, or `None`.
+    xf: Option<XfRecord>,
+
+    section: Section,
 }
 
 /// The number format ids the SpreadsheetML specification fixes.
@@ -86,104 +110,88 @@ pub fn read_cell_formats<R: ReadSeek>(archive: &mut Archive<R>) -> HashMap<i32, 
         return HashMap::new();
     };
 
-    let mut custom: HashMap<i32, String> = HashMap::new();
+    let collected = read_styles(&text);
 
-    // The fonts come from the part in index order: a file writes font 0 itself, so seeding a default
-    // here would shift every id by one.
-    let mut fonts: Vec<CellStyle> = Vec::new();
-    let mut xfs: Vec<XfRecord> = Vec::new();
-
-    read_styles(&text, &mut custom, &mut fonts, &mut xfs);
-
-    resolve(custom, &fonts, xfs)
+    resolve(
+        collected.custom,
+        &collected.fonts,
+        &collected.fills,
+        collected.xfs,
+    )
 }
 
-/// Walks the style part once, collecting custom codes, fonts and cell records in the order they appear.
-fn read_styles(
-    text: &str,
-    custom: &mut HashMap<i32, String>,
-    fonts: &mut Vec<CellStyle>,
-    xfs: &mut Vec<XfRecord>,
-) {
+/// Walks the style part once, collecting custom codes, fonts, fills and cell records in order.
+fn read_styles(text: &str) -> Collected {
     let mut reader = Reader::from_str(text);
-    let mut section = Section::Other;
-
-    // A `<font>` and an `<xf>` are the two elements that have children worth reading, so their state is
-    // tracked while they are open.
-    let mut font: Option<CellStyle> = None;
-    let mut xf: Option<XfRecord> = None;
+    let mut collected = Collected::default();
 
     loop {
         match reader.read_event() {
             Ok(Event::Start(element)) | Ok(Event::Empty(element)) => {
-                handle_element(element.name(), &element, &mut section, &mut font, &mut xf, custom);
+                open_element(&mut collected, element.name(), &element);
             }
 
-            Ok(Event::End(element)) => match element.name().local_name().into_inner() {
-                "font" => {
-                    if let Some(style) = font.take() {
-                        fonts.push(style);
-                    }
-                }
-                "xf" => {
-                    if let Some(record) = xf.take() {
-                        xfs.push(record);
-                    }
-                }
-                "fonts" | "cellXfs" | "numFmts" | "cellStyleXfs" => section = Section::Other,
-                _ => {}
-            },
+            Ok(Event::End(element)) => {
+                close_element(&mut collected, element.name().local_name().into_inner())
+            }
 
             // A document type is a security hazard, not a document: a part that carries one is refused
             // outright rather than parsed carefully.
-            Ok(Event::DocType(_)) => return,
-            Ok(Event::Eof) | Err(_) => return,
+            Ok(Event::DocType(_)) => return collected,
+            Ok(Event::Eof) | Err(_) => return collected,
             _ => {}
         }
     }
 }
 
-/// Handles one opening or standalone element, updating the section and the open font and record.
-fn handle_element(
-    name: QName<'_>,
-    element: &BytesStart<'_>,
-    section: &mut Section,
-    font: &mut Option<CellStyle>,
-    xf: &mut Option<XfRecord>,
-    custom: &mut HashMap<i32, String>,
-) {
+/// Handles one opening or standalone element, updating the section and the record open within it.
+fn open_element(state: &mut Collected, name: QName<'_>, element: &BytesStart<'_>) {
     match name.local_name().into_inner() {
-        "numFmts" => *section = Section::NumFmts,
-        "fonts" => *section = Section::Fonts,
-        "cellXfs" => *section = Section::CellXfs,
-        "cellStyleXfs" => *section = Section::Other,
+        "numFmts" => state.section = Section::NumFmts,
+        "fonts" => state.section = Section::Fonts,
+        "fills" => state.section = Section::Fills,
+        "cellXfs" => state.section = Section::CellXfs,
+        "cellStyleXfs" => state.section = Section::Other,
 
-        "numFmt" if *section == Section::NumFmts => {
+        "numFmt" if state.section == Section::NumFmts => {
             let id = attribute(element, "numFmtId").and_then(|value| value.parse().ok());
             let code = attribute(element, "formatCode");
 
             if let (Some(id), Some(code)) = (id, code) {
-                custom.insert(id, code);
+                state.custom.insert(id, code);
             }
         }
 
         // A font with no children is the default face, which is what `<font/>` means.
-        "font" if *section == Section::Fonts => *font = Some(CellStyle::DEFAULT),
+        "font" if state.section == Section::Fonts => state.font = Some(CellStyle::DEFAULT),
 
-        "b" if font.is_some() => font.as_mut().unwrap().bold = true,
-        "i" if font.is_some() => font.as_mut().unwrap().italic = true,
-        "u" if font.is_some() => font.as_mut().unwrap().underline = true,
+        "b" if state.font.is_some() => state.font.as_mut().unwrap().bold = true,
+        "i" if state.font.is_some() => state.font.as_mut().unwrap().italic = true,
+        "u" if state.font.is_some() => state.font.as_mut().unwrap().underline = true,
 
-        "color" if font.is_some() => {
+        "color" if state.font.is_some() => {
             if let Some(color) = attribute(element, "rgb").and_then(|rgb| parse_rgb(&rgb)) {
-                font.as_mut().unwrap().text_color = Some(color);
+                state.font.as_mut().unwrap().text_color = Some(color);
             }
         }
 
-        "xf" if *section == Section::CellXfs => {
-            *xf = Some(XfRecord {
+        // A fill is opened before its `<patternFill>`, so it starts without a colour and the `fgColor` of
+        // a solid fill is what fills it in; a pattern that paints nothing leaves it `None`.
+        "fill" if state.section == Section::Fills => state.fill = Some(None),
+
+        "fgColor" if state.fill.is_some() => {
+            if let Some(color) = attribute(element, "rgb").and_then(|rgb| parse_rgb(&rgb)) {
+                state.fill = Some(Some(color));
+            }
+        }
+
+        "xf" if state.section == Section::CellXfs => {
+            state.xf = Some(XfRecord {
                 num_fmt_id: attribute(element, "numFmtId").and_then(|value| value.parse().ok()),
                 font_id: attribute(element, "fontId")
+                    .and_then(|value| value.parse().ok())
+                    .unwrap_or(0),
+                fill_id: attribute(element, "fillId")
                     .and_then(|value| value.parse().ok())
                     .unwrap_or(0),
                 align: HorizontalAlign::General,
@@ -191,8 +199,8 @@ fn handle_element(
             });
         }
 
-        "alignment" if xf.is_some() => {
-            let record = xf.as_mut().unwrap();
+        "alignment" if state.xf.is_some() => {
+            let record = state.xf.as_mut().unwrap();
 
             if let Some(horizontal) = attribute(element, "horizontal") {
                 record.align = parse_align(&horizontal);
@@ -205,10 +213,33 @@ fn handle_element(
     }
 }
 
+/// Handles a closing element, finishing whichever record it ends.
+fn close_element(state: &mut Collected, name: &str) {
+    match name {
+        "font" => {
+            if let Some(font) = state.font.take() {
+                state.fonts.push(font);
+            }
+        }
+
+        "fill" => state.fills.push(state.fill.take().flatten()),
+
+        "xf" => {
+            if let Some(record) = state.xf.take() {
+                state.xfs.push(record);
+            }
+        }
+
+        "fonts" | "fills" | "cellXfs" | "numFmts" | "cellStyleXfs" => state.section = Section::Other,
+        _ => {}
+    }
+}
+
 /// Turns the raw records into per-index formatting, mapping font ids to fonts and numFmt ids to codes.
 fn resolve(
     custom: HashMap<i32, String>,
     fonts: &[CellStyle],
+    fills: &[Option<[u8; 3]>],
     xfs: Vec<XfRecord>,
 ) -> HashMap<i32, CellFormat> {
     let built_in = built_in_number_formats();
@@ -231,6 +262,7 @@ fn resolve(
 
         style.align = record.align;
         style.wrap = record.wrap;
+        style.fill = fills.get(record.fill_id.max(0) as usize).copied().flatten();
 
         // An entry that says nothing is left out, so the worksheet treats it as formatting-free.
         if number_format.is_some() || !style.is_default() {

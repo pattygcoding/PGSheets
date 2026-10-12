@@ -314,15 +314,21 @@ impl GridView {
                     continue;
                 };
 
+                let style = cell.style();
+                let bounds = self.layout.cell_bounds(row, column);
+                let cell_rect = to_screen(origin, bounds);
+
+                // A fill is painted even when the cell holds nothing: a cell can carry a fill and no
+                // value, and that is exactly what "colour the column, then fill it in" leaves behind.
+                if let Some([red, green, blue]) = style.fill {
+                    painter.rect_filled(cell_rect, 0.0, Color32::from_rgb(red, green, blue));
+                }
+
                 let text = cell.display_value();
 
                 if text.is_empty() {
                     continue;
                 }
-
-                let style = cell.style();
-                let bounds = self.layout.cell_bounds(row, column);
-                let cell_rect = to_screen(origin, bounds);
 
                 let colour = if cell.value().is_error() {
                     ERROR_TEXT

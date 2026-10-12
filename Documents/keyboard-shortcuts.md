@@ -75,8 +75,7 @@ keys while they have focus — those are listed separately.
 - Every other **Ctrl** combination belongs to the window, so `Ctrl+S` saves wherever the grid has
   focus.
 - **Undo** and **Redo** are greyed out when there is nothing to undo or redo. Cut, Copy and Paste
-  stay available and always act on the current selection; if the system clipboard cannot be reached
-  they say so in the status bar.
+  stay available and always act on the current selection.
 - **Ctrl+C copies formulas as formulas**, not as their results — the same as a spreadsheet. Use the
   copy/paste round trip to duplicate a formula across a column and watch its references follow.
 

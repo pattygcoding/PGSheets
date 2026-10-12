@@ -89,6 +89,11 @@ impl Harness {
         }
     }
 
+    /// A Ctrl chord that reaches the window as a key press.
+    ///
+    /// Only the keys the platform leaves alone go through here. The clipboard chords do not: the
+    /// backend turns them into dedicated events, so they are sent by [`Harness::copy`],
+    /// [`Harness::cut`] and [`Harness::paste`] instead.
     fn command(&mut self, key: Key) {
         self.key(
             key,
@@ -100,6 +105,17 @@ impl Harness {
         );
     }
 
+    /// Ctrl+C, as the platform actually delivers it.
+    fn copy(&mut self) {
+        self.frame(vec![Event::Copy]);
+    }
+
+    /// Ctrl+X, as the platform actually delivers it.
+    fn cut(&mut self) {
+        self.frame(vec![Event::Cut]);
+    }
+
+    /// Ctrl+V, as the platform actually delivers it: the text arrives with the event.
     fn paste(&mut self, text: &str) {
         self.frame(vec![Event::Paste(text.to_string())]);
     }
@@ -163,14 +179,16 @@ fn the_grid_gets_a_real_rectangle_in_the_middle_of_the_window() {
 
     // The bars take a strip each and the grid gets what is left — and it has to be a *real* rectangle.
     // An empty or negative one paints nothing at all, which is precisely the bug this test exists for:
-    // the window opened with the menu, the formula bar, the status bar and no sheet in between.
+    // the window opened with the menu, the formula bar, the status bar and no sheet in between. The
+    // window now also carries a ribbon and a sheet-tab strip, so the grid is a little over three
+    // quarters of the height rather than all of it.
     assert!(
         size.width > f64::from(WIDTH) * 0.9 && size.width <= f64::from(WIDTH),
         "the grid's width was {} of {WIDTH}",
         size.width
     );
     assert!(
-        size.height > f64::from(HEIGHT) * 0.8 && size.height < f64::from(HEIGHT),
+        size.height > f64::from(HEIGHT) * 0.7 && size.height < f64::from(HEIGHT),
         "the grid's height was {} of {HEIGHT}",
         size.height
     );
@@ -275,7 +293,7 @@ fn copy_puts_the_selection_on_the_clipboard_as_delimited_text() {
         "select all covers the two cells"
     );
 
-    harness.command(Key::C);
+    harness.copy();
 
     assert_eq!(
         harness.app.clipboard_text().trim_end(),
@@ -462,7 +480,7 @@ fn a_paste_from_this_application_shifts_relative_references() {
 
     // Copy B1, move one row down, and paste.
     harness.key(Key::ArrowUp, Modifiers::default());
-    harness.command(Key::C);
+    harness.copy();
 
     let copied = harness.app.clipboard_text().to_string();
 
@@ -552,7 +570,7 @@ fn an_open_editor_keeps_the_clipboard_shortcuts_for_itself() {
     // While the editor is open the window leaves Ctrl+A to the text box, so the selection behind it does
     // not become the used range and nothing is copied.
     harness.command(Key::A);
-    harness.command(Key::C);
+    harness.copy();
 
     assert_eq!(
         harness.app.selection(),
@@ -605,5 +623,147 @@ fn the_toolbar_commands_style_the_active_cell() {
     assert_eq!(
         harness.app.workbook().cell_style(0, 0).map(|style| style.bold),
         Some(true)
+    );
+}
+
+#[test]
+fn worksheets_are_independent_and_switchable() {
+    let mut harness = Harness::new();
+    harness.idle();
+    harness.blank_sheet();
+
+    harness.enter("1");
+    assert_eq!(harness.raw(0, 0), "1");
+
+    // A new sheet is added after the active one and becomes active.
+    harness.run(Command::AddSheet);
+    harness.idle();
+
+    assert_eq!(harness.app.sheet_count(), 2);
+    assert_eq!(harness.app.active_sheet_name(), "Sheet2");
+
+    // It starts empty, and takes its own values.
+    assert_eq!(harness.raw(0, 0), "");
+    harness.enter("2");
+    assert_eq!(harness.raw(0, 0), "2");
+
+    // Going back finds Sheet1 exactly as it was left.
+    harness.run(Command::SelectSheet(0));
+    harness.idle();
+
+    assert_eq!(harness.app.active_sheet_name(), "Sheet1");
+    assert_eq!(harness.raw(0, 0), "1");
+
+    // A rename takes effect, and the sheet keeps its cells.
+    harness.app.rename_active_sheet("Revenue");
+    assert_eq!(harness.app.active_sheet_name(), "Revenue");
+    assert_eq!(harness.raw(0, 0), "1");
+
+    // A duplicate name is refused.
+    harness.app.rename_active_sheet("Sheet2");
+    assert_eq!(harness.app.active_sheet_name(), "Revenue");
+
+    // Deleting the active sheet leaves the other one active.
+    harness.run(Command::DeleteSheet);
+    harness.idle();
+
+    assert_eq!(harness.app.sheet_count(), 1);
+    assert_eq!(harness.app.active_sheet_name(), "Sheet2");
+}
+
+#[test]
+fn the_last_worksheet_cannot_be_deleted() {
+    let mut harness = Harness::new();
+    harness.idle();
+
+    harness.run(Command::DeleteSheet);
+    harness.idle();
+
+    assert_eq!(harness.app.sheet_count(), 1);
+    assert!(
+        harness.app.status().contains("at least one"),
+        "{}",
+        harness.app.status()
+    );
+}
+
+#[test]
+fn applying_a_colour_records_it_as_recently_used() {
+    let mut harness = Harness::new();
+    harness.idle();
+    harness.blank_sheet();
+
+    harness.enter("x");
+    harness.key(Key::ArrowUp, Modifiers::default());
+
+    harness.run(Command::SetFill(Some([0xFF, 0x00, 0x00])));
+    harness.run(Command::SetTextColor(Some([0x00, 0x70, 0xC0])));
+
+    // Most recent first, whichever control the colour came from.
+    assert_eq!(
+        harness.app.recent_colors(),
+        &[[0x00, 0x70, 0xC0], [0xFF, 0x00, 0x00]]
+    );
+
+    // Using a colour again moves it to the front rather than listing it twice.
+    harness.run(Command::SetFill(Some([0xFF, 0x00, 0x00])));
+    assert_eq!(
+        harness.app.recent_colors(),
+        &[[0xFF, 0x00, 0x00], [0x00, 0x70, 0xC0]]
+    );
+
+    // Clearing a colour is not a colour, so it is not recorded.
+    harness.run(Command::SetFill(None));
+    assert_eq!(harness.app.recent_colors().len(), 2);
+}
+
+#[test]
+fn cut_copies_the_selection_and_empties_it() {
+    let mut harness = Harness::new();
+    harness.idle();
+    harness.blank_sheet();
+
+    harness.enter("hello");
+    harness.key(Key::ArrowUp, Modifiers::default());
+
+    // Ctrl+X as the platform delivers it.
+    harness.cut();
+
+    assert_eq!(harness.app.clipboard_text().trim_end(), "hello");
+    assert_eq!(harness.raw(0, 0), "", "the source cell was emptied");
+    assert!(
+        harness.app.status().starts_with("Cut"),
+        "{}",
+        harness.app.status()
+    );
+}
+
+#[test]
+fn the_fill_command_paints_the_active_cell() {
+    let mut harness = Harness::new();
+    harness.idle();
+    harness.blank_sheet();
+
+    harness.enter("summer");
+    harness.key(Key::ArrowUp, Modifiers::default());
+
+    harness.run(Command::SetFill(Some([0xFF, 0xEE, 0x00])));
+    assert_eq!(
+        harness.app.workbook().cell_style(0, 0).map(|style| style.fill),
+        Some(Some([0xFF, 0xEE, 0x00]))
+    );
+
+    // Clearing it puts the cell back to an unstyled one, which the accessor reports as no style.
+    harness.run(Command::SetFill(None));
+    assert_eq!(
+        harness.app.workbook().cell_style(0, 0).map(|style| style.fill),
+        None
+    );
+
+    // And each command is its own undo step.
+    harness.run(Command::Undo);
+    assert_eq!(
+        harness.app.workbook().cell_style(0, 0).map(|style| style.fill),
+        Some(Some([0xFF, 0xEE, 0x00]))
     );
 }

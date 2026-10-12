@@ -70,45 +70,63 @@ impl SpreadsheetImporter for XlsxImporter {
         let mut result = ImportResult::new();
 
         let sheets = parts::read_workbook_sheets(&mut archive, &mut result);
-        result.worksheet_count = sheets.len() as i32;
-
-        let Some(first) = sheets.first() else {
-            result.add_warning("The workbook does not contain any worksheets.");
-            return Ok(result);
-        };
-
-        if sheets.len() > 1 {
-            result.add_warning(format!(
-                "The workbook has {} worksheets; only '{}' was imported.",
-                sheets.len(),
-                first.name
-            ));
-        }
-
-        result.sheet_name = Some(first.name.clone());
 
         let shared_strings = parts::read_shared_strings(&mut archive);
         let number_formats = styles::read_cell_formats(&mut archive);
 
-        // The path the workbook gave can be absolute inside the package or relative to the workbook
-        // part, and it has already been resolved by whoever read the relationships.
-        let Some(worksheet) = archive.read(&first.path) else {
-            result.add_warning(format!(
-                "Worksheet part '{}' is missing from the archive.",
-                first.path
-            ));
-            return Ok(result);
-        };
+        let mut imported = 0;
 
-        worksheet::parse_worksheet(
-            &worksheet,
-            sink,
-            &shared_strings,
-            &number_formats,
-            &mut result,
-            self.import_formulas,
-            &self.functions,
-        );
+        for sheet in &sheets {
+            if !sheet.is_worksheet {
+                // A chartsheet or a macro sheet has no cells to read, and writing one back as a
+                // worksheet would change what the file is, so it is reported rather than faked.
+                result.dropped_sheets += 1;
+                result.add_warning(format!(
+                    "The '{}' sheet is not a worksheet and was not imported.",
+                    sheet.name
+                ));
+
+                continue;
+            }
+
+            // The path the workbook gave can be absolute inside the package or relative to the workbook
+            // part, and it has already been resolved by whoever read the relationships.
+            let Some(worksheet) = archive.read(&sheet.path) else {
+                result.add_warning(format!(
+                    "Worksheet part '{}' is missing from the archive.",
+                    sheet.path
+                ));
+
+                continue;
+            };
+
+            sink.begin_sheet(&sheet.name);
+
+            worksheet::parse_worksheet(
+                &worksheet,
+                sink,
+                &shared_strings,
+                &number_formats,
+                &mut result,
+                self.import_formulas,
+                &self.functions,
+            );
+
+            sink.end_sheet();
+
+            if result.sheet_name.is_none() {
+                result.sheet_name = Some(sheet.name.clone());
+            }
+
+            result.sheet_names.push(sheet.name.clone());
+            imported += 1;
+        }
+
+        result.worksheet_count = imported;
+
+        if imported == 0 && result.dropped_sheets == 0 {
+            result.add_warning("The workbook does not contain any worksheets.");
+        }
 
         Ok(result)
     }

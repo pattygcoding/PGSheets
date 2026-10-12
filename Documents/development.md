@@ -95,7 +95,7 @@ These are load-bearing; breaking one silently degrades correctness or performanc
 
 ## Testing
 
-260 tests, headless: no display, no window, no dependence on the working directory. That is what makes
+291 tests, headless: no display, no window, no dependence on the working directory. That is what makes
 the engine, the model, the readers, the writers, the grid's geometry and the window's own wiring
 testable in CI on three platforms.
 

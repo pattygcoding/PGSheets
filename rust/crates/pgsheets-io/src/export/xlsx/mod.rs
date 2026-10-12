@@ -11,7 +11,7 @@ use std::collections::HashMap;
 
 use pgsheets_core::{CellStyle, ExportSource, HorizontalAlign};
 
-use super::{ExportError, ExportOptions, ExportResult, SpreadsheetExporter};
+use super::{ExportError, ExportOptions, ExportResult, SheetRef, SpreadsheetExporter};
 use crate::ooxml::{
     CONTENT_TYPES_NAMESPACE, PACKAGE_RELATIONSHIP_NAMESPACE, RELATIONSHIP_NAMESPACE, sanitize_sheet_name,
 };
@@ -25,7 +25,15 @@ const ROOT_RELATIONSHIPS_PART: &str = "_rels/.rels";
 const WORKBOOK_PART: &str = "xl/workbook.xml";
 const WORKBOOK_RELATIONSHIPS_PART: &str = "xl/_rels/workbook.xml.rels";
 const STYLES_PART: &str = "xl/styles.xml";
-const WORKSHEET_PART: &str = "xl/worksheets/sheet1.xml";
+
+/// The content type of a worksheet part.
+const WORKSHEET_CONTENT_TYPE: &str =
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml";
+
+/// The part a worksheet lives in, numbered from one: the first sheet is `sheet1.xml`.
+fn worksheet_part(index: usize) -> String {
+    format!("xl/worksheets/sheet{}.xml", index + 1)
+}
 
 const OFFICE_DOCUMENT_RELATIONSHIP: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument";
@@ -56,17 +64,25 @@ pub(crate) struct StyleTable {
     fonts: Vec<CellStyle>,
     font_indices: HashMap<CellStyle, i32>,
 
+    /// The distinct background fills, numbered from 0; indices 0 and 1 are the two the specification
+    /// reserves, so the first real fill is index 2.
+    fills: Vec<Option<[u8; 3]>>,
+    fill_indices: HashMap<Option<[u8; 3]>, i32>,
+
     /// The distinct style records, numbered from 0; index 0 is the plain entry.
     xfs: Vec<StyleKey>,
     xf_indices: HashMap<StyleKey, i32>,
 }
 
-/// One style record: a cell's number format, font and alignment together, which is exactly what an
-/// `<xf>` holds.
+/// One style record: a cell's number format, font, fill and alignment together, which is exactly what
+/// an `<xf>` holds.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub(crate) struct StyleKey {
     /// Index into [`StyleTable::fonts`].
     font: i32,
+
+    /// Index into [`StyleTable::fills`].
+    fill: i32,
 
     /// A custom number format id, or 0 for General.
     num_fmt_id: i32,
@@ -88,8 +104,15 @@ impl StyleTable {
         table.fonts.push(CellStyle::DEFAULT);
         table.font_indices.insert(CellStyle::DEFAULT, 0);
 
+        // The specification reserves two fills: 0 is `none` and 1 is `gray125`. Neither is a real fill,
+        // and Excel expects both, so they are seeded here and a real fill is interned from index 2.
+        table.fills.push(None);
+        table.fills.push(None);
+        table.fill_indices.insert(None, 0);
+
         let plain = StyleKey {
             font: 0,
+            fill: 0,
             num_fmt_id: 0,
             align: HorizontalAlign::General,
             wrap: false,
@@ -112,9 +135,11 @@ impl StyleTable {
         };
 
         let font = self.intern_font(style);
+        let fill = self.intern_fill(style.fill);
 
         let key = StyleKey {
             font,
+            fill,
             num_fmt_id,
             align: style.align,
             wrap: style.wrap,
@@ -139,9 +164,11 @@ impl StyleTable {
         };
 
         let font = self.font_indices.get(&font_key(style)).copied().unwrap_or(0);
+        let fill = self.fill_indices.get(&style.fill).copied().unwrap_or(0);
 
         let key = StyleKey {
             font,
+            fill,
             num_fmt_id,
             align: style.align,
             wrap: style.wrap,
@@ -158,6 +185,11 @@ impl StyleTable {
     /// The distinct fonts, in index order.
     pub(crate) fn fonts(&self) -> &[CellStyle] {
         &self.fonts
+    }
+
+    /// The distinct fills, in index order; the first two are the reserved slots.
+    pub(crate) fn fills(&self) -> &[Option<[u8; 3]>] {
+        &self.fills
     }
 
     /// The distinct style records, in index order.
@@ -201,13 +233,26 @@ impl StyleTable {
 
         index
     }
+
+    fn intern_fill(&mut self, fill: Option<[u8; 3]>) -> i32 {
+        if let Some(index) = self.fill_indices.get(&fill) {
+            return *index;
+        }
+
+        let index = self.fills.len() as i32;
+        self.fills.push(fill);
+        self.fill_indices.insert(fill, index);
+
+        index
+    }
 }
 
-/// The part of a style a font is made of: the text attributes, without the alignment or the number
-/// format, which belong on the `xf` rather than on the `<font>`.
+/// The part of a style a font is made of: the text attributes, without the alignment, the fill or the
+/// number format, which belong elsewhere in the style record.
 fn font_key(style: CellStyle) -> CellStyle {
     CellStyle {
         align: HorizontalAlign::General,
+        fill: None,
         wrap: false,
         ..style
     }
@@ -232,41 +277,89 @@ impl SpreadsheetExporter for XlsxWriter {
     fn export(
         &self,
         writer: &mut dyn WriteSeek,
-        _file_name: &str,
+        file_name: &str,
         source: &dyn ExportSource,
         options: &ExportOptions,
     ) -> Result<ExportResult, ExportError> {
-        let mut result = ExportResult::new();
-        let sheet_name = sanitize_sheet_name(Some(&options.sheet_name));
+        let sheets = [SheetRef {
+            name: &options.sheet_name,
+            source,
+        }];
 
-        // The style table has to know every format, font and alignment before either part is written,
-        // so they are collected in one pass over the cell keys first.
-        let styles = collect_styles(source, options);
-        let worksheet = write_worksheet(source, options, &styles, &mut result);
+        self.export_workbook(writer, file_name, &sheets, options)
+    }
+
+    fn export_workbook(
+        &self,
+        writer: &mut dyn WriteSeek,
+        _file_name: &str,
+        sheets: &[SheetRef<'_>],
+        options: &ExportOptions,
+    ) -> Result<ExportResult, ExportError> {
+        if sheets.is_empty() {
+            return Err(ExportError::Io("the document holds no worksheets".to_string()));
+        }
+
+        let mut result = ExportResult::new();
+
+        // Every name is sanitised first, so the sheet records and the parts agree on what each is
+        // called, and a name that had to change is reported.
+        let names: Vec<String> = sheets
+            .iter()
+            .map(|sheet| sanitize_sheet_name(Some(sheet.name)))
+            .collect();
+
+        for (sheet, name) in sheets.iter().zip(&names) {
+            if sheet.name != name {
+                result.add_warning(format!(
+                    "Worksheet name '{}' is not valid in xlsx; written as '{name}'.",
+                    sheet.name
+                ));
+            }
+        }
+
+        // The style table has to know every format, font and alignment before any part is written, so
+        // it is collected in one pass over every sheet's cells first and shared between them.
+        let mut styles = StyleTable::new();
+
+        for sheet in sheets {
+            collect_styles_into(&mut styles, sheet.source, options);
+        }
+
+        let mut worksheets = Vec::with_capacity(sheets.len());
+
+        for sheet in sheets {
+            let mut sheet_result = ExportResult::new();
+            worksheets.push(write_worksheet(sheet.source, options, &styles, &mut sheet_result));
+
+            result.cells_written += sheet_result.cells_written;
+            result.rows = result.rows.max(sheet_result.rows);
+            result.columns = result.columns.max(sheet_result.columns);
+        }
 
         let mut package = PackageWriter::create(writer);
 
-        package.write_part(CONTENT_TYPES_PART, &write_content_types())?;
+        package.write_part(CONTENT_TYPES_PART, &write_content_types(names.len()))?;
         package.write_part(ROOT_RELATIONSHIPS_PART, &write_root_relationships())?;
-        package.write_part(WORKBOOK_PART, &write_workbook(&sheet_name))?;
-        package.write_part(WORKBOOK_RELATIONSHIPS_PART, &write_workbook_relationships())?;
+        package.write_part(WORKBOOK_PART, &write_workbook(&names))?;
+        package.write_part(
+            WORKBOOK_RELATIONSHIPS_PART,
+            &write_workbook_relationships(names.len()),
+        )?;
         package.write_part(STYLES_PART, &write_styles(&styles))?;
-        package.write_part(WORKSHEET_PART, &worksheet)?;
-        package.finish()?;
 
-        if options.sheet_name != sheet_name {
-            result.add_warning(format!(
-                "Worksheet name '{}' is not valid in xlsx; written as '{sheet_name}'.",
-                options.sheet_name
-            ));
+        for (index, worksheet) in worksheets.iter().enumerate() {
+            package.write_part(&worksheet_part(index), worksheet)?;
         }
+
+        package.finish()?;
 
         Ok(result)
     }
 }
 
 /// `[Content_Types].xml`: what each part of the package is.
-fn write_content_types() -> String {
+fn write_content_types(sheet_count: usize) -> String {
     let mut xml = XmlWriter::new();
     xml.declaration();
     xml.start_in("Types", CONTENT_TYPES_NAMESPACE);
@@ -283,11 +376,15 @@ fn write_content_types() -> String {
         "/xl/workbook.xml",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
     );
-    write_override_type(
-        &mut xml,
-        "/xl/worksheets/sheet1.xml",
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml",
-    );
+
+    for index in 0..sheet_count {
+        write_override_type(
+            &mut xml,
+            &format!("/{}", worksheet_part(index)),
+            WORKSHEET_CONTENT_TYPE,
+        );
+    }
+
     write_override_type(
         &mut xml,
         "/xl/styles.xml",
@@ -308,8 +405,8 @@ fn write_root_relationships() -> String {
     xml.into_string()
 }
 
-/// `xl/workbook.xml`: the one worksheet's name and id.
-fn write_workbook(sheet_name: &str) -> String {
+/// `xl/workbook.xml`: every worksheet's name, id and relationship.
+fn write_workbook(names: &[String]) -> String {
     let mut xml = XmlWriter::new();
     xml.declaration();
     xml.start("workbook");
@@ -318,33 +415,51 @@ fn write_workbook(sheet_name: &str) -> String {
     xml.namespace_attribute("r", RELATIONSHIP_NAMESPACE);
 
     xml.start("sheets");
-    xml.start("sheet");
-    xml.attribute("name", sheet_name);
-    xml.attribute("sheetId", "1");
-    xml.qualified_attribute("r:id", "rId1");
-    xml.end();
+
+    for (index, name) in names.iter().enumerate() {
+        xml.start("sheet");
+        xml.attribute("name", name);
+        xml.attribute("sheetId", &(index + 1).to_string());
+        xml.qualified_attribute("r:id", &format!("rId{}", index + 1));
+        xml.end();
+    }
+
     xml.end();
 
     xml.end();
     xml.into_string()
 }
 
-/// `xl/_rels/workbook.xml.rels`: the workbook's relationship to the worksheet and the styles.
-fn write_workbook_relationships() -> String {
+/// `xl/_rels/workbook.xml.rels`: the workbook's relationships to its worksheets and the styles.
+fn write_workbook_relationships(sheet_count: usize) -> String {
     let mut xml = XmlWriter::new();
     xml.declaration();
     xml.start_in("Relationships", PACKAGE_RELATIONSHIP_NAMESPACE);
-    write_relationship(&mut xml, "rId1", WORKSHEET_RELATIONSHIP, "worksheets/sheet1.xml");
-    write_relationship(&mut xml, "rId2", STYLES_RELATIONSHIP, "styles.xml");
+
+    for index in 0..sheet_count {
+        write_relationship(
+            &mut xml,
+            &format!("rId{}", index + 1),
+            WORKSHEET_RELATIONSHIP,
+            &format!("worksheets/sheet{}.xml", index + 1),
+        );
+    }
+
+    // The styles relationship follows the worksheets, so its id depends on how many there are.
+    write_relationship(
+        &mut xml,
+        &format!("rId{}", sheet_count + 1),
+        STYLES_RELATIONSHIP,
+        "styles.xml",
+    );
+
     xml.end();
     xml.into_string()
 }
 
-/// Collects the number formats, fonts and alignments the cells being written use, so the style table
-/// can name them and the worksheet can refer to them by index.
-fn collect_styles(source: &dyn ExportSource, options: &ExportOptions) -> StyleTable {
-    let mut table = StyleTable::new();
-
+/// Collects the number formats, fonts and alignments a sheet's cells use into a shared table, so the
+/// style table can name them and any worksheet can refer to them by index.
+fn collect_styles_into(table: &mut StyleTable, source: &dyn ExportSource, options: &ExportOptions) {
     for address in source.populated_cells() {
         if options
             .range
@@ -358,8 +473,6 @@ fn collect_styles(source: &dyn ExportSource, options: &ExportOptions) -> StyleTa
             source.cell_style(address.row, address.column),
         );
     }
-
-    table
 }
 
 /// `xl/styles.xml`: the number formats, fonts and alignments every cell in the sheet refers to.
@@ -397,10 +510,17 @@ fn write_styles(styles: &StyleTable) -> String {
 
     xml.end();
 
+    // The first two fills are the ones the specification reserves — `none` and `gray125` — and every
+    // real fill follows them, which is why a cell's fill index is never 0 or 1.
     xml.start("fills");
-    xml.attribute("count", "2");
+    xml.attribute("count", &styles.fills().len().to_string());
     write_pattern_fill(&mut xml, "none");
     write_pattern_fill(&mut xml, "gray125");
+
+    for fill in styles.fills().get(2..).unwrap_or_default() {
+        write_solid_fill(&mut xml, fill.unwrap_or([0, 0, 0]));
+    }
+
     xml.end();
 
     xml.start("borders");
@@ -417,7 +537,7 @@ fn write_styles(styles: &StyleTable) -> String {
 
     xml.start("cellStyleXfs");
     xml.attribute("count", "1");
-    write_format(&mut xml, "0", 0, false, false, HorizontalAlign::General, false);
+    write_format(&mut xml, "0", 0, 0, false, false, HorizontalAlign::General, false);
     xml.end();
 
     xml.start("cellXfs");
@@ -428,6 +548,7 @@ fn write_styles(styles: &StyleTable) -> String {
             &mut xml,
             &styles.number_format_id_of(key).to_string(),
             key.font,
+            key.fill,
             true,
             key.num_fmt_id != 0,
             key.align,
@@ -486,6 +607,26 @@ fn write_pattern_fill(xml: &mut XmlWriter, pattern_type: &str) {
     xml.end();
 }
 
+/// Writes one `<fill>` that paints a cell a solid colour.
+fn write_solid_fill(xml: &mut XmlWriter, [red, green, blue]: [u8; 3]) {
+    xml.start("fill");
+    xml.start("patternFill");
+    xml.attribute("patternType", "solid");
+
+    xml.start("fgColor");
+    xml.attribute("rgb", &format!("FF{red:02X}{green:02X}{blue:02X}"));
+    xml.end();
+
+    // The background colour has to be present for Excel to accept a solid fill; index 64 is
+    // "automatic", which is what a spreadsheet writes for one it was not told.
+    xml.start("bgColor");
+    xml.attribute("indexed", "64");
+    xml.end();
+
+    xml.end();
+    xml.end();
+}
+
 /// Writes one `<font>`: the text attributes a style carries, on top of the default face.
 fn write_font(xml: &mut XmlWriter, font: CellStyle) {
     xml.start("font");
@@ -525,6 +666,7 @@ fn write_format(
     xml: &mut XmlWriter,
     num_fmt_id: &str,
     font_id: i32,
+    fill_id: i32,
     include_style_reference: bool,
     apply_number_format: bool,
     align: HorizontalAlign,
@@ -533,7 +675,7 @@ fn write_format(
     xml.start("xf");
     xml.attribute("numFmtId", num_fmt_id);
     xml.attribute("fontId", &font_id.to_string());
-    xml.attribute("fillId", "0");
+    xml.attribute("fillId", &fill_id.to_string());
     xml.attribute("borderId", "0");
 
     if include_style_reference {
@@ -542,6 +684,10 @@ fn write_format(
 
     if font_id != 0 {
         xml.attribute("applyFont", "1");
+    }
+
+    if fill_id != 0 {
+        xml.attribute("applyFill", "1");
     }
 
     if apply_number_format {

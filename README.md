@@ -47,10 +47,17 @@ The sections below are the short version; those pages are the detail.
   rewritten to follow — and `#REF!` where a referenced row or column was removed.
 - **Number formats**, from `0.00` and `#,##0.00` to `0%`, `$#,##0.00` and `yyyy-mm-dd`. A format changes
   what a cell shows without touching what it holds, so `=A1+1` on a date still means the next day. They
-  are read from a `.xlsx` style table, applied from **Sheet → Number format**, and written back.
-- **Cell styles** from a toolbar above the formula bar: **bold**, *italic*, underline, horizontal
-  alignment, text colour and wrap. They live on the cell beside its number format, follow it through
-  undo and structural edits, and round-trip through a `.xlsx` font and alignment table.
+  are read from a `.xlsx` style table, applied from the **Number** group on the ribbon or from
+  **Sheet → Number format**, and written back.
+- **A ribbon** above the formula bar gathers the cell commands into labelled groups — History, Clipboard,
+  Font, Alignment and Number — so **bold**, *italic*, underline, alignment, text colour, a background
+  **fill** and wrap are one click away, with undo and redo beside them. Each colour control opens a menu
+  of basic colours, the ones used lately and the ones you saved. A style lives on the cell beside its
+  number format, follows it through undo and structural edits, and round-trips through a `.xlsx` table.
+- **Multiple worksheets.** A tab per sheet, a `+` to add one and a `-` to remove the active one; a tab
+  is renamed by double-clicking it. `.xlsx` reads and writes every worksheet, so a multi-sheet workbook
+  round-trips. A chartsheet or a macro sheet is not a worksheet, so a workbook holding one is not saved
+  over in place.
 - **Files**: `.xlsx` and `.csv`/`.tsv`, both directions, written by this repository's own code.
 
 ## Building and running
@@ -68,7 +75,7 @@ commands, if you would rather be explicit:
 ```powershell
 cd rust
 cargo run  -p pgsheets-app                          # launch the app
-cargo test --workspace                              # 260 tests, headless
+cargo test --workspace                              # 291 tests, headless
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt  --all --check
 ```
@@ -93,15 +100,15 @@ earlier C#/.NET implementation.
 
 ## Not implemented
 
-Multiple sheet tabs, find/replace and sorting are out of scope for this version. Saving writes one
-worksheet.
+Find/replace and sorting are out of scope for this version. A workbook's worksheets all round-trip, but
+a chartsheet or a macro sheet is not a worksheet and is not written back.
 
 **Number formats and the simple cell styles are the exception to "no formatting".** Number formats are
 read from a workbook's style table and written back, so a date or a percentage keeps its meaning through
-a save. Bold, italic, underline, horizontal alignment, text colour and wrap are read and written too, so
-they survive a round trip. Everything else about a cell's style is dropped: fonts, borders, the cell
-fill, merged cells and column widths are not read, shown or written, and a CSV export carries no style
-at all.
+a save. Bold, italic, underline, horizontal alignment, text colour, a background fill and wrap are read
+and written too, so they survive a round trip. Everything else about a cell's style is dropped: fonts,
+borders, merged cells and column widths are not read, shown or written, and a CSV export carries no
+style at all.
 
 A date *imported* from a file is a serial with a date format, which is what makes it behave like a
 number. One *typed* into a cell stays the text you typed, because the raw input is kept verbatim: it

@@ -14,6 +14,8 @@ use pgsheets_sheet::{Workbook, sheet_paste};
 
 use crate::files;
 use crate::grid::{GridAction, GridView};
+use crate::palette::Palette;
+use crate::ribbon;
 
 /// The cell being edited, and the text in it.
 struct Editor {
@@ -24,6 +26,23 @@ struct Editor {
     /// False until the text box has been given focus once. Focusing it in the frame it appears, and
     /// only then, is what makes typing into a cell feel immediate.
     focused: bool,
+}
+
+/// One worksheet: the name on its tab, and its own workbook.
+///
+/// Every sheet has a workbook of its own rather than the document adding a sheet dimension to one
+/// shared map. Cells never refer across sheets — the formula language has no sheet reference — so the
+/// split costs nothing and each sheet keeps its own undo history, engine and revision exactly as the
+/// single-sheet document did.
+struct Sheet {
+    name: String,
+    workbook: Workbook,
+}
+
+/// A tab being renamed, and the text being typed into it.
+struct Rename {
+    index: usize,
+    text: String,
 }
 
 /// What the user asked for, held until they have answered the unsaved-changes question.
@@ -66,18 +85,27 @@ enum Prompt {
 
 /// The application state for one window.
 pub struct PgSheetsApp {
-    workbook: Workbook,
+    /// Every worksheet, in tab order. The active one is what the grid shows.
+    sheets: Vec<Sheet>,
+
+    /// Which sheet is active.
+    active: usize,
+
+    /// How many sheets the opened file held that are not worksheets — chartsheets and the like. Such a
+    /// sheet cannot be loaded or written back, so a document with any must not be saved over the file
+    /// it came from.
+    dropped_sheets: i32,
+
+    /// The tab being renamed, if any, and the text being typed into it.
+    renaming: Option<Rename>,
+
+    /// The colours used lately and the ones the user saved.
+    palette: Palette,
+
     grid: GridView,
     editor: Option<Editor>,
     path: Option<PathBuf>,
     dirty: bool,
-
-    /// How many worksheets the opened file held. Saving writes one, so a document with more must not be
-    /// written back over the file it came from.
-    worksheet_count: i32,
-
-    /// The worksheet name to write on save: the one the file had, so a save keeps its name.
-    sheet_name: String,
 
     status: String,
 
@@ -142,13 +170,18 @@ impl Default for PgSheetsApp {
         let saved_revision = workbook.revision();
 
         Self {
-            workbook,
+            sheets: vec![Sheet {
+                name: "Sheet1".to_string(),
+                workbook,
+            }],
+            active: 0,
+            dropped_sheets: 0,
+            renaming: None,
+            palette: Palette::default(),
             grid: GridView::default(),
             editor: None,
             path: None,
             dirty: false,
-            worksheet_count: 1,
-            sheet_name: "Sheet1".to_string(),
             status: "Ready".to_string(),
             selection_text: String::new(),
             prompt: None,
@@ -220,9 +253,10 @@ impl PgSheetsApp {
         // its strip off the top or the bottom and leaves the rest for the next one; doing this by hand
         // with `with_layout` is what left the grid a rectangle of its own invention — a negative one.
         egui::Panel::top("menu-bar").show(ui, |ui| self.menus(ui));
-        egui::Panel::top("toolbar").show(ui, |ui| self.toolbar(ui));
+        egui::Panel::top("ribbon").show(ui, |ui| self.ribbon(ui));
         egui::Panel::top("formula-bar").show(ui, |ui| self.formula_bar(ui));
         egui::Panel::bottom("status-bar").show(ui, |ui| self.status_bar(ui));
+        egui::Panel::bottom("sheet-tabs").show(ui, |ui| self.sheet_tabs(ui));
 
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
@@ -230,7 +264,7 @@ impl PgSheetsApp {
                 // The grid's own top-left corner, which is what positions the one editor over its cell.
                 let origin = ui.available_rect_before_wrap().min;
 
-                let action = self.grid.show(ui, &self.workbook);
+                let action = self.grid.show(ui, &self.sheets[self.active].workbook);
 
                 self.apply_action(action);
 
@@ -255,6 +289,7 @@ impl PgSheetsApp {
         }
 
         self.ask(ui);
+        self.rename_prompt(ui);
         self.sync_title(ui);
 
         // One place touches the clipboard, and it is the frame rather than a command.
@@ -295,8 +330,8 @@ impl PgSheetsApp {
             });
 
             ui.menu_button("Edit", |ui| {
-                let undo = self.workbook.can_undo();
-                let redo = self.workbook.can_redo();
+                let undo = self.book().can_undo();
+                let redo = self.book().can_redo();
 
                 if ui.add_enabled(undo, egui::Button::new("Undo")).clicked() {
                     self.run(Command::Undo);
@@ -332,6 +367,23 @@ impl PgSheetsApp {
             });
 
             ui.menu_button("Sheet", |ui| {
+                if ui.button("Insert Sheet").clicked() {
+                    self.run(Command::AddSheet);
+                }
+
+                if ui.button("Rename Sheet...").clicked() {
+                    self.renaming = Some(Rename {
+                        index: self.active,
+                        text: self.sheets[self.active].name.clone(),
+                    });
+                }
+
+                if ui.button("Delete Sheet").clicked() {
+                    self.run(Command::DeleteSheet);
+                }
+
+                ui.separator();
+
                 if ui.button("Insert Rows").clicked() {
                     self.run(Command::InsertRows);
                 }
@@ -372,9 +424,23 @@ impl PgSheetsApp {
     ///
     /// With the editor open these keys belong to the text box, which is the rule the C# window
     /// followed — otherwise Ctrl+C would copy the cell instead of the text being edited.
+    ///
+    /// The clipboard chords arrive as dedicated events rather than key presses: the platform backend
+    /// turns Ctrl+X, Ctrl+C and Ctrl+V into [`egui::Event::Cut`], [`egui::Event::Copy`] and
+    /// [`egui::Event::Paste`] and never emits the `Key` for them. Listening for the key alone would
+    /// leave cut and copy doing nothing at all.
     fn apply_shortcuts(&mut self, ui: &egui::Ui) {
         if self.editor.is_some() || self.bar_editing {
             return;
+        }
+
+        for event in ui.input(|i| i.events.clone()) {
+            match event {
+                egui::Event::Copy => self.copy(),
+                egui::Event::Cut => self.cut(),
+                egui::Event::Paste(text) => self.paste(&text),
+                _ => {}
+            }
         }
 
         // The platform's own modifier, so Cmd works on macOS without a second code path.
@@ -393,20 +459,8 @@ impl PgSheetsApp {
                 self.run(if shift { Command::Redo } else { Command::Undo });
             } else if pressed(Key::Y) {
                 self.run(Command::Redo);
-            } else if pressed(Key::C) {
-                self.copy();
-            } else if pressed(Key::X) {
-                self.copy();
-                self.clear_selection();
             } else if pressed(Key::A) {
                 self.run(Command::SelectUsedRange);
-            }
-        }
-
-        // A paste arrives as an event carrying the text, so there is no clipboard API to call here.
-        for event in ui.input(|i| i.events.clone()) {
-            if let egui::Event::Paste(text) = event {
-                self.paste(&text);
             }
         }
     }
@@ -486,6 +540,18 @@ pub enum Command {
 
     /// Give the selection's text a colour, or clear it with `None`.
     SetTextColor(Option<[u8; 3]>),
+
+    /// Give the selection a background fill, or clear it with `None`.
+    SetFill(Option<[u8; 3]>),
+
+    /// Add an empty worksheet and make it active.
+    AddSheet,
+
+    /// Make the worksheet at this index active.
+    SelectSheet(usize),
+
+    /// Delete the active worksheet, unless it is the only one.
+    DeleteSheet,
 }
 
 /// The formats the Sheet menu offers, labelled with the format code itself — which is what a spreadsheet
@@ -519,7 +585,7 @@ impl PgSheetsApp {
             Some(GridAction::SelectionChanged) => self.refresh(),
 
             Some(GridAction::SelectUsedRange) => {
-                let cells = self.workbook.populated_cells();
+                let cells = self.book().populated_cells();
 
                 self.grid.layout_mut().select_used_range(cells.into_iter());
                 self.refresh();
@@ -531,15 +597,98 @@ impl PgSheetsApp {
         }
     }
 
-    /// The formatting toolbar: the cell attributes, as buttons above the formula bar.
+    /// The ribbon: the cell commands, in labelled groups above the formula bar.
     ///
-    /// Every button reads the active cell's style to show whether it is on, exactly as a spreadsheet
-    /// does, and every click goes through the same commands the menus would, so there is still one path
-    /// into the document.
-    fn toolbar(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            let style = self.active_style();
+    /// Every control goes through the same command the menu does, so there is still one path into the
+    /// document; each group is framed and captioned the way a spreadsheet labels its ribbon. A group is
+    /// only drawn when the feature behind it exists — there is no Styles, Cells or Editing group,
+    /// because conditional formatting, tables and cell styles are not implemented, and a row of dead
+    /// buttons would be worse than their absence.
+    fn ribbon(&mut self, ui: &mut egui::Ui) {
+        let response = egui::Frame::NONE
+            .fill(ui.visuals().faint_bg_color)
+            .inner_margin(egui::Margin::symmetric(8, 4))
+            .show(ui, |ui| {
+                ui.horizontal_top(|ui| {
+                    // The ribbon packs a lot into one row, so its controls are spaced tightly and all
+                    // the same height — which is what makes the groups line up.
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    ui.spacing_mut().interact_size.y = 22.0;
 
+                    self.history_group(ui);
+                    self.clipboard_group(ui);
+                    self.font_group(ui);
+                    self.alignment_group(ui);
+                    self.number_group(ui);
+                });
+            });
+
+        // A hairline under the band, which is what makes the ribbon read as a strip of its own rather
+        // than as part of the grid. Half a pixel up, so the last row of pixels is not clipped away.
+        let rect = response.response.rect;
+
+        ui.painter().line_segment(
+            [
+                egui::pos2(rect.left(), rect.bottom() - 0.5),
+                egui::pos2(rect.right(), rect.bottom() - 0.5),
+            ],
+            egui::Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
+        );
+    }
+
+    /// The History group: undo and redo, disabled when there is nothing to undo or redo.
+    ///
+    /// A spreadsheet keeps these in its quick-access bar rather than the ribbon; here they are the
+    /// first group, which is the same idea in a window with no title-bar strip of its own.
+    fn history_group(&mut self, ui: &mut egui::Ui) {
+        let undo = self.book().can_undo();
+        let redo = self.book().can_redo();
+
+        ribbon::group(ui, "History", |ui| {
+            if ui
+                .add_enabled(undo, egui::Button::new("Undo"))
+                .on_hover_text("Undo (Ctrl+Z)")
+                .clicked()
+            {
+                self.run(Command::Undo);
+            }
+
+            if ui
+                .add_enabled(redo, egui::Button::new("Redo"))
+                .on_hover_text("Redo (Ctrl+Y)")
+                .clicked()
+            {
+                self.run(Command::Redo);
+            }
+        });
+    }
+
+    /// The Clipboard group: paste, cut and copy of the current selection.
+    fn clipboard_group(&mut self, ui: &mut egui::Ui) {
+        ribbon::group(ui, "Clipboard", |ui| {
+            if ui.button("Paste").on_hover_text("Paste the clipboard").clicked() {
+                self.run(Command::Paste);
+            }
+
+            if ui
+                .button("Cut")
+                .on_hover_text("Copy and clear the selection")
+                .clicked()
+            {
+                self.run(Command::Cut);
+            }
+
+            if ui.button("Copy").on_hover_text("Copy the selection").clicked() {
+                self.run(Command::Copy);
+            }
+        });
+    }
+
+    /// The Font group: the text attributes, with the colour control beside the toggles.
+    fn font_group(&mut self, ui: &mut egui::Ui) {
+        let style = self.active_style();
+
+        ribbon::group(ui, "Font", |ui| {
             if ui
                 .selectable_label(style.bold, egui::RichText::new("B").strong())
                 .on_hover_text("Bold")
@@ -566,20 +715,49 @@ impl PgSheetsApp {
 
             ui.separator();
 
-            let align = |ui: &mut egui::Ui, label: &str, value: HorizontalAlign| {
-                ui.selectable_label(style.align == value, label).clicked()
-            };
+            let text = ribbon::colour_control(
+                ui,
+                "Text colour",
+                style.text_color,
+                ribbon::DEFAULT_TEXT,
+                &self.palette,
+                "Automatic",
+            );
 
-            if align(ui, "Left", HorizontalAlign::Left) {
-                self.run(Command::Align(HorizontalAlign::Left));
+            if let Some(choice) = text {
+                self.apply_colour(false, choice);
             }
 
-            if align(ui, "Center", HorizontalAlign::Center) {
-                self.run(Command::Align(HorizontalAlign::Center));
-            }
+            // The paint bucket: a colour here is the cell's background, which is the same place a
+            // spreadsheet puts it.
+            let fill = ribbon::colour_control(
+                ui,
+                "Fill colour",
+                style.fill,
+                ribbon::DEFAULT_FILL,
+                &self.palette,
+                "No fill",
+            );
 
-            if align(ui, "Right", HorizontalAlign::Right) {
-                self.run(Command::Align(HorizontalAlign::Right));
+            if let Some(choice) = fill {
+                self.apply_colour(true, choice);
+            }
+        });
+    }
+
+    /// The Alignment group: horizontal alignment, drawn as icons, beside the wrap toggle.
+    fn alignment_group(&mut self, ui: &mut egui::Ui) {
+        let style = self.active_style();
+
+        ribbon::group(ui, "Alignment", |ui| {
+            for (align, hint) in [
+                (HorizontalAlign::Left, "Align left"),
+                (HorizontalAlign::Center, "Align centre"),
+                (HorizontalAlign::Right, "Align right"),
+            ] {
+                if ribbon::alignment_button(ui, align, style.align == align, hint).clicked() {
+                    self.run(Command::Align(align));
+                }
             }
 
             ui.separator();
@@ -591,23 +769,42 @@ impl PgSheetsApp {
             {
                 self.run(Command::ToggleWrap);
             }
-
-            ui.separator();
-
-            let mut rgb = style.text_color.unwrap_or([0x20, 0x21, 0x24]);
-
-            if ui.color_edit_button_srgb(&mut rgb).changed() {
-                self.run(Command::SetTextColor(Some(rgb)));
-            }
-
-            if ui
-                .add_enabled(style.text_color.is_some(), egui::Button::new("Default"))
-                .on_hover_text("Clear the text colour")
-                .clicked()
-            {
-                self.run(Command::SetTextColor(None));
-            }
         });
+    }
+
+    /// The Number group: the active cell's number format, chosen from the same list the menu offers.
+    fn number_group(&mut self, ui: &mut egui::Ui) {
+        let current = self.current_format_label();
+        let mut chosen = None;
+
+        ribbon::group(ui, "Number", |ui| {
+            egui::ComboBox::from_id_salt("number-format")
+                .width(150.0)
+                .selected_text(current)
+                .show_ui(ui, |ui| {
+                    for (label, code) in NUMBER_FORMATS {
+                        if ui.selectable_label(false, label).clicked() {
+                            chosen = Some(code);
+                        }
+                    }
+                });
+        });
+
+        if let Some(code) = chosen {
+            self.run(Command::NumberFormat(code));
+        }
+    }
+
+    /// The label the Number group shows for the active cell's number format.
+    fn current_format_label(&self) -> String {
+        let active = self.grid.layout().active_cell();
+        let code = self.book().number_format(active.row, active.column);
+
+        NUMBER_FORMATS
+            .iter()
+            .find(|(_, candidate)| *candidate == code)
+            .map(|(label, _)| (*label).to_string())
+            .unwrap_or_else(|| code.unwrap_or("General").to_string())
     }
 
     /// The name box and the formula bar.
@@ -623,7 +820,7 @@ impl PgSheetsApp {
                 // The cell underneath changed, so the bar follows it rather than keeping text that
                 // belongs to another cell.
                 self.formula_cell = Some(active);
-                self.formula_text = self.workbook.raw_input(active.row, active.column).to_string();
+                self.formula_text = self.book().raw_input(active.row, active.column).to_string();
             }
 
             if self.bar_editing {
@@ -750,7 +947,7 @@ impl PgSheetsApp {
     fn begin_edit(&mut self, row: i32, column: i32, seed: Option<String>) {
         let text = match seed {
             Some(text) => text,
-            None => self.workbook.raw_input(row, column).to_string(),
+            None => self.book().raw_input(row, column).to_string(),
         };
 
         self.editor = Some(Editor {
@@ -767,7 +964,7 @@ impl PgSheetsApp {
             return;
         };
 
-        self.workbook
+        self.book_mut()
             .set_raw_input(editor.row, editor.column, &editor.text);
         self.after_edit();
     }
@@ -782,14 +979,14 @@ impl PgSheetsApp {
     fn commit_bar(&mut self, active: CellAddress) {
         let text = self.formula_text.clone();
 
-        self.workbook.set_raw_input(active.row, active.column, &text);
+        self.book_mut().set_raw_input(active.row, active.column, &text);
         self.after_edit();
     }
 
     /// A change reached the document: the summary has to be recomputed, and whether it is unsaved is
     /// decided by the revision rather than by the fact that something moved.
     fn after_edit(&mut self) {
-        self.dirty = self.workbook.revision() != self.saved_revision;
+        self.dirty = self.book().revision() != self.saved_revision;
         self.formula_cell = None;
         self.refresh();
     }
@@ -814,7 +1011,7 @@ impl PgSheetsApp {
 
         let cells = range.row_count() * range.column_count();
 
-        if self.workbook.cell_count() > SUMMARY_CELL_LIMIT {
+        if self.book().cell_count() > SUMMARY_CELL_LIMIT {
             self.selection_text = format!("{} selected", thousands(i64::from(cells)));
             return;
         }
@@ -822,12 +1019,12 @@ impl PgSheetsApp {
         let mut numbers = 0i32;
         let mut total = 0.0f64;
 
-        for cell in self.workbook.populated_cells() {
+        for cell in self.book().populated_cells() {
             if !range.contains(cell.row, cell.column) {
                 continue;
             }
 
-            let value = self.workbook.value(cell.row, cell.column);
+            let value = self.book().value(cell.row, cell.column);
 
             // A number *value* only: a cell holding "5" as text is not counted, which is what the C#
             // window's summary did.
@@ -855,14 +1052,306 @@ impl PgSheetsApp {
         &self.grid
     }
 
-    /// The document.
+    /// The active sheet's workbook.
     pub fn workbook(&self) -> &Workbook {
-        &self.workbook
+        self.book()
+    }
+
+    /// The active sheet's workbook.
+    fn book(&self) -> &Workbook {
+        &self.sheets[self.active].workbook
+    }
+
+    /// The active sheet's workbook, mutably.
+    fn book_mut(&mut self) -> &mut Workbook {
+        &mut self.sheets[self.active].workbook
+    }
+
+    /// The active sheet's tab name.
+    fn active_name(&self) -> &str {
+        &self.sheets[self.active].name
+    }
+
+    /// A worksheet name not already in use: `Sheet1`, `Sheet2`, and so on.
+    fn next_sheet_name(&self) -> String {
+        let mut number = self.sheets.len() + 1;
+
+        loop {
+            let candidate = format!("Sheet{number}");
+
+            if !self.sheets.iter().any(|sheet| sheet.name == candidate) {
+                return candidate;
+            }
+
+            number += 1;
+        }
+    }
+
+    /// Adds an empty worksheet after the active one and switches to it.
+    fn add_sheet(&mut self) {
+        self.cancel_edit();
+
+        self.sheets.push(Sheet {
+            name: self.next_sheet_name(),
+            workbook: files::new_workbook(),
+        });
+
+        self.active = self.sheets.len() - 1;
+        self.after_sheet_switch();
+
+        let name = self.active_name().to_string();
+        self.status = format!("Added '{name}'");
+    }
+
+    /// Switches to another worksheet.
+    fn select_sheet(&mut self, index: usize) {
+        if index >= self.sheets.len() || index == self.active {
+            return;
+        }
+
+        self.cancel_edit();
+        self.active = index;
+        self.after_sheet_switch();
+
+        let name = self.active_name().to_string();
+        self.status = format!("'{name}'");
+    }
+
+    /// Removes the active worksheet, unless it is the only one.
+    ///
+    /// A workbook always keeps at least one sheet, which is what a spreadsheet does too: there is
+    /// nothing to type into otherwise.
+    fn delete_sheet(&mut self) {
+        if self.sheets.len() <= 1 {
+            self.status = "A workbook must keep at least one worksheet".to_string();
+
+            return;
+        }
+
+        let name = self.sheets.remove(self.active).name;
+
+        if self.active >= self.sheets.len() {
+            self.active = self.sheets.len() - 1;
+        }
+
+        self.after_sheet_switch();
+        self.status = format!("Deleted '{name}'");
+    }
+
+    /// Renames a worksheet. An empty name, or one already taken, is refused rather than applied.
+    fn rename_sheet(&mut self, index: usize, name: &str) {
+        let name = name.trim();
+
+        if name.is_empty() {
+            self.status = "A worksheet name cannot be empty".to_string();
+
+            return;
+        }
+
+        let taken = self
+            .sheets
+            .iter()
+            .enumerate()
+            .any(|(other, sheet)| other != index && sheet.name == name);
+
+        if taken {
+            self.status = format!("A sheet named '{name}' already exists");
+
+            return;
+        }
+
+        // The same sanitiser the xlsx writer uses, so a name that is legal here is legal in the file.
+        let clean = pgsheets_io::ooxml::sanitize_sheet_name(Some(name));
+        self.sheets[index].name = clean.clone();
+        self.status = format!("Renamed to '{clean}'");
+    }
+
+    /// Renames the active worksheet, which is what a test drives.
+    pub fn rename_active_sheet(&mut self, name: &str) {
+        self.rename_sheet(self.active, name);
+    }
+
+    /// Cancels any edit and resets the view for a newly active sheet, whose selection starts fresh.
+    fn after_sheet_switch(&mut self) {
+        self.editor = None;
+        self.renaming = None;
+        self.formula_cell = None;
+        self.grid.layout_mut().reset_view();
+        self.refresh();
+    }
+
+    /// The sheet tabs: a `+` to add one, a `-` to remove the active one, and a tab per worksheet.
+    fn sheet_tabs(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            if ui.button("+").on_hover_text("Add a worksheet").clicked() {
+                self.run(Command::AddSheet);
+            }
+
+            if ui
+                .add_enabled(self.sheets.len() > 1, egui::Button::new("-"))
+                .on_hover_text("Delete the active worksheet")
+                .clicked()
+            {
+                self.run(Command::DeleteSheet);
+            }
+
+            ui.separator();
+
+            // The tab list is read to decide what to do, and the doing happens afterwards, so nothing
+            // is mutated while it is being walked.
+            let mut select = None;
+            let mut rename = None;
+
+            for index in 0..self.sheets.len() {
+                let response = ui
+                    .selectable_label(index == self.active, &self.sheets[index].name)
+                    .on_hover_text("Double-click to rename");
+
+                if response.clicked() {
+                    select = Some(index);
+                }
+
+                if response.double_clicked() {
+                    rename = Some(index);
+                }
+            }
+
+            if let Some(index) = select {
+                self.run(Command::SelectSheet(index));
+            }
+
+            if let Some(index) = rename {
+                self.renaming = Some(Rename {
+                    index,
+                    text: self.sheets[index].name.clone(),
+                });
+            }
+        });
+    }
+
+    /// The rename box, drawn as a modal over the window while a tab is being renamed.
+    fn rename_prompt(&mut self, ui: &mut egui::Ui) {
+        let Some(rename) = self.renaming.as_mut() else {
+            return;
+        };
+
+        let mut apply = false;
+        let mut cancel = false;
+
+        egui::Modal::new(egui::Id::new("sheet-rename")).show(ui.ctx(), |ui| {
+            ui.set_width(320.0);
+            ui.label("Rename worksheet");
+
+            let response = ui.add(egui::TextEdit::singleline(&mut rename.text).desired_width(f32::INFINITY));
+
+            if !response.has_focus() {
+                response.request_focus();
+            }
+
+            ui.horizontal(|ui| {
+                if ui.button("Rename").clicked() {
+                    apply = true;
+                }
+
+                if ui.button("Cancel").clicked() {
+                    cancel = true;
+                }
+            });
+
+            if ui.input(|i| i.key_pressed(Key::Enter)) {
+                apply = true;
+            }
+
+            if ui.input(|i| i.key_pressed(Key::Escape)) {
+                cancel = true;
+            }
+        });
+
+        if apply {
+            if let Some(Rename { index, text }) = self.renaming.take() {
+                self.rename_sheet(index, &text);
+            }
+        } else if cancel {
+            self.renaming = None;
+        }
     }
 
     /// True when the document has changed since it was last saved or opened.
     pub fn is_dirty(&self) -> bool {
         self.dirty
+    }
+
+    /// The active worksheet's tab name.
+    pub fn active_sheet_name(&self) -> &str {
+        self.active_name()
+    }
+
+    /// How many worksheets the document holds.
+    pub fn sheet_count(&self) -> usize {
+        self.sheets.len()
+    }
+
+    /// Every worksheet's tab name, in order.
+    pub fn sheet_names(&self) -> Vec<&str> {
+        self.sheets.iter().map(|sheet| sheet.name.as_str()).collect()
+    }
+
+    /// Reads the saved and recent colours from the user's configuration.
+    ///
+    /// The binary calls this once the window exists, so that a headless test — which never calls it —
+    /// keeps an empty palette and never touches the real configuration.
+    pub fn load_palette(&mut self) {
+        self.palette = Palette::load();
+    }
+
+    /// The colours the user saved.
+    pub fn saved_colors(&self) -> &[[u8; 3]] {
+        self.palette.saved()
+    }
+
+    /// The colours used lately, most recent first.
+    pub fn recent_colors(&self) -> &[[u8; 3]] {
+        self.palette.recent()
+    }
+
+    /// Remembers a colour as used.
+    ///
+    /// The recent list is a session's convenience, so nothing is written for it — only a saved colour
+    /// touches the file.
+    fn note_color(&mut self, colour: [u8; 3]) {
+        self.palette.note_used(colour);
+    }
+
+    /// Acts on what a colour menu reported.
+    ///
+    /// `fill` says which of the two colours it was, because the menu itself knows nothing about cells:
+    /// it only knows the palette and what was picked.
+    fn apply_colour(&mut self, fill: bool, choice: ribbon::ColourChoice) {
+        match choice {
+            ribbon::ColourChoice::Apply(Some(colour)) => {
+                self.run(if fill {
+                    Command::SetFill(Some(colour))
+                } else {
+                    Command::SetTextColor(Some(colour))
+                });
+            }
+
+            ribbon::ColourChoice::Apply(None) => self.run(if fill {
+                Command::SetFill(None)
+            } else {
+                Command::SetTextColor(None)
+            }),
+
+            ribbon::ColourChoice::Save(colour) => {
+                self.palette.save(colour);
+                self.palette.store();
+            }
+
+            ribbon::ColourChoice::Forget(colour) => {
+                self.palette.forget(colour);
+                self.palette.store();
+            }
+        }
     }
 
     /// What the status bar is showing.
@@ -940,9 +1429,9 @@ impl PgSheetsApp {
                 self.cancel_edit();
 
                 let applied = if command == Command::Undo {
-                    self.workbook.undo()
+                    self.book_mut().undo()
                 } else {
-                    self.workbook.redo()
+                    self.book_mut().redo()
                 };
 
                 if !applied {
@@ -965,13 +1454,7 @@ impl PgSheetsApp {
 
             Command::Copy => self.copy(),
 
-            Command::Cut => {
-                let range = self.selection();
-
-                self.copy();
-                self.clear_selection();
-                self.status = format!("Cut {}", range_label(range));
-            }
+            Command::Cut => self.cut(),
 
             Command::Paste => {
                 let text = self.clipboard_text.clone();
@@ -984,6 +1467,10 @@ impl PgSheetsApp {
             }
 
             Command::SelectUsedRange => self.apply_action(Some(GridAction::SelectUsedRange)),
+
+            Command::AddSheet => self.add_sheet(),
+            Command::SelectSheet(index) => self.select_sheet(index),
+            Command::DeleteSheet => self.delete_sheet(),
 
             Command::NumberFormat(code) => self.apply_number_format(code),
             Command::InsertRows => self.apply_structural_edit(true, true),
@@ -1024,12 +1511,31 @@ impl PgSheetsApp {
             }
 
             Command::SetTextColor(colour) => {
+                if let Some(colour) = colour {
+                    self.note_color(colour);
+                }
+
                 self.apply_cell_style(
                     move |style| style.with_text_color(colour),
                     if colour.is_some() {
                         "Set the text colour"
                     } else {
                         "Cleared the text colour"
+                    },
+                );
+            }
+
+            Command::SetFill(colour) => {
+                if let Some(colour) = colour {
+                    self.note_color(colour);
+                }
+
+                self.apply_cell_style(
+                    move |style| style.with_fill(colour),
+                    if colour.is_some() {
+                        "Set the fill colour"
+                    } else {
+                        "Cleared the fill colour"
                     },
                 );
             }
@@ -1048,7 +1554,7 @@ impl PgSheetsApp {
 
         let mut result = ExportResult::new();
 
-        self.clipboard_text = csv::build(&self.workbook, &options, '\t', &mut result);
+        self.clipboard_text = csv::build(self.book(), &options, '\t', &mut result);
 
         // Where it came from is remembered, because that and the text are what let a paste shift relative
         // references; the clipboard itself carries only text.
@@ -1056,6 +1562,17 @@ impl PgSheetsApp {
         self.clipboard_out = Some(self.clipboard_text.clone());
 
         self.status = format!("Copied {}", range_label(range));
+    }
+
+    /// Copies the selection and empties it.
+    ///
+    /// One path for both the menu item and the Ctrl+X chord, so the two can never drift apart.
+    fn cut(&mut self) {
+        let range = self.selection();
+
+        self.copy();
+        self.clear_selection();
+        self.status = format!("Cut {}", range_label(range));
     }
 
     /// Pastes delimited text at the selection, tiling it to cover the whole of it.
@@ -1083,8 +1600,7 @@ impl PgSheetsApp {
             _ => (0, 0),
         };
 
-        let (written, covered) =
-            sheet_paste::apply(&block, &mut self.workbook, target, row_delta, column_delta);
+        let (written, covered) = sheet_paste::apply(&block, self.book_mut(), target, row_delta, column_delta);
 
         // Leave the pasted block selected, the way a spreadsheet does.
         self.grid.layout_mut().select_range(covered);
@@ -1099,7 +1615,7 @@ impl PgSheetsApp {
         if range.is_single_cell() {
             let cell = self.grid.layout().active_cell();
 
-            self.workbook.set_raw_input(cell.row, cell.column, "");
+            self.book_mut().set_raw_input(cell.row, cell.column, "");
             self.after_edit();
 
             return;
@@ -1107,7 +1623,7 @@ impl PgSheetsApp {
 
         // Gather first: writing while walking the populated cells would mutate what is being walked.
         let targets: Vec<CellAddress> = self
-            .workbook
+            .book()
             .populated_cells()
             .into_iter()
             .filter(|cell| range.contains(cell.row, cell.column))
@@ -1117,13 +1633,13 @@ impl PgSheetsApp {
             return;
         }
 
-        self.workbook.begin_bulk_update();
+        self.book_mut().begin_bulk_update();
 
         for cell in targets {
-            self.workbook.set_raw_input(cell.row, cell.column, "");
+            self.book_mut().set_raw_input(cell.row, cell.column, "");
         }
 
-        self.workbook.end_bulk_update();
+        self.book_mut().end_bulk_update();
 
         self.after_edit();
     }
@@ -1142,7 +1658,7 @@ impl PgSheetsApp {
         // Gathered first, because setting a format can add or remove cells and the walk cannot be over a
         // list that is changing underneath it.
         let targets: Vec<CellAddress> = self
-            .workbook
+            .book()
             .populated_cells()
             .into_iter()
             .filter(|cell| selection.contains(cell.row, cell.column))
@@ -1150,13 +1666,13 @@ impl PgSheetsApp {
 
         let touched = targets.len();
 
-        self.workbook.begin_bulk_update();
+        self.book_mut().begin_bulk_update();
 
         for cell in targets {
-            self.workbook.set_number_format(cell.row, cell.column, code);
+            self.book_mut().set_number_format(cell.row, cell.column, code);
         }
 
-        self.workbook.end_bulk_update();
+        self.book_mut().end_bulk_update();
 
         self.after_edit();
 
@@ -1181,12 +1697,12 @@ impl PgSheetsApp {
         // The new styles are gathered first, because setting one can add or remove a cell and the walk
         // cannot be over a list that is changing underneath it.
         let targets: Vec<(i32, i32, CellStyle)> = self
-            .workbook
+            .book()
             .populated_cells()
             .into_iter()
             .filter(|cell| selection.contains(cell.row, cell.column))
             .filter_map(|cell| {
-                self.workbook
+                self.book()
                     .cell(cell.row, cell.column)
                     .map(|data| (cell.row, cell.column, change(data.style())))
             })
@@ -1194,13 +1710,13 @@ impl PgSheetsApp {
 
         let touched = targets.len();
 
-        self.workbook.begin_bulk_update();
+        self.book_mut().begin_bulk_update();
 
         for (row, column, style) in targets {
-            self.workbook.set_cell_style(row, column, style);
+            self.book_mut().set_cell_style(row, column, style);
         }
 
-        self.workbook.end_bulk_update();
+        self.book_mut().end_bulk_update();
 
         self.after_edit();
 
@@ -1211,7 +1727,7 @@ impl PgSheetsApp {
     fn active_style(&self) -> CellStyle {
         let active = self.grid.layout().active_cell();
 
-        self.workbook
+        self.book()
             .cell_style(active.row, active.column)
             .unwrap_or_default()
     }
@@ -1230,10 +1746,10 @@ impl PgSheetsApp {
         };
 
         let applied = match (insert, rows) {
-            (true, true) => self.workbook.insert_rows(at, count),
-            (false, true) => self.workbook.delete_rows(at, count),
-            (true, false) => self.workbook.insert_columns(at, count),
-            (false, false) => self.workbook.delete_columns(at, count),
+            (true, true) => self.book_mut().insert_rows(at, count),
+            (false, true) => self.book_mut().delete_rows(at, count),
+            (true, false) => self.book_mut().insert_columns(at, count),
+            (false, false) => self.book_mut().delete_columns(at, count),
         };
 
         if !applied {
@@ -1261,17 +1777,20 @@ impl PgSheetsApp {
         };
     }
 
-    /// An empty document. `clear` also drops the undo history, because there is nothing meaningful to
-    /// return to.
+    /// An empty document: one empty worksheet, and no history.
     fn new_document(&mut self) {
-        self.workbook.clear();
+        self.sheets = vec![Sheet {
+            name: "Sheet1".to_string(),
+            workbook: files::new_workbook(),
+        }];
 
+        self.active = 0;
+        self.dropped_sheets = 0;
+        self.renaming = None;
         self.path = None;
-        self.worksheet_count = 1;
-        self.sheet_name = "Sheet1".to_string();
         self.editor = None;
         self.grid.layout_mut().reset_view();
-        self.saved_revision = self.workbook.revision();
+        self.saved_revision = self.book().revision();
         self.dirty = false;
         self.refresh();
         self.status = "New spreadsheet".to_string();
@@ -1314,8 +1833,33 @@ impl PgSheetsApp {
 
         match outcome {
             Ok(imported) => {
-                self.workbook.clear();
-                imported.write_into(&mut self.workbook);
+                // A file that named no worksheet — an empty one, say — still opens as a single empty
+                // sheet, so there is always something to type into.
+                let mut sheets: Vec<Sheet> = imported
+                    .sheets
+                    .iter()
+                    .map(|imported_sheet| {
+                        let mut workbook = files::new_workbook();
+                        imported_sheet.write_into(&mut workbook);
+
+                        Sheet {
+                            name: imported_sheet.name.clone(),
+                            workbook,
+                        }
+                    })
+                    .collect();
+
+                if sheets.is_empty() {
+                    sheets.push(Sheet {
+                        name: "Sheet1".to_string(),
+                        workbook: files::new_workbook(),
+                    });
+                }
+
+                self.sheets = sheets;
+                self.active = 0;
+                self.dropped_sheets = imported.result.dropped_sheets;
+                self.renaming = None;
 
                 let name = path
                     .file_name()
@@ -1323,17 +1867,10 @@ impl PgSheetsApp {
                     .unwrap_or("the file")
                     .to_string();
 
-                self.sheet_name = imported
-                    .result
-                    .sheet_name
-                    .clone()
-                    .unwrap_or_else(|| "Sheet1".to_string());
-
-                self.worksheet_count = imported.result.worksheet_count;
                 self.path = Some(path);
                 self.editor = None;
                 self.grid.layout_mut().reset_view();
-                self.saved_revision = self.workbook.revision();
+                self.saved_revision = self.book().revision();
                 self.dirty = false;
 
                 self.report(
@@ -1357,17 +1894,17 @@ impl PgSheetsApp {
             return self.save_as();
         };
 
-        // Sent to Save As rather than written in place when the document came from a file that held more
-        // than one worksheet, or when the name is one this application cannot write — an .xlsm workbook,
-        // for instance, whose VBA project it could not produce. A document this app cannot fully write is
-        // never written over the file it came from.
+        // Sent to Save As rather than written in place when the document came from a file that held a
+        // sheet this app cannot represent — a chartsheet, say — or when the name is one it cannot write
+        // (an .xlsm workbook, whose VBA project it could not produce). A document this app cannot fully
+        // write is never written over the file it came from.
         let name = path
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or_default()
             .to_string();
 
-        if !SheetExporter::can_save_in_place(self.worksheet_count) || !files::can_export(&name) {
+        if !SheetExporter::can_save_in_place(self.dropped_sheets) || !files::can_export(&name) {
             return self.save_as();
         }
 
@@ -1405,11 +1942,21 @@ impl PgSheetsApp {
 
     /// Writes the document to a path, and remembers that the file now matches it.
     fn write(&mut self, path: &std::path::Path) -> bool {
-        // Captured before the count is reset: the note about the worksheets a single-worksheet save left
-        // behind is about the file that was *opened*.
-        let lost = SheetExporter::describe_lost_worksheets(self.worksheet_count, &self.sheet_name);
+        // Captured before the document is rewritten: the note about the sheets a save does not preserve
+        // is about the file that was *opened*.
+        let lost = SheetExporter::describe_lost_sheets(self.dropped_sheets);
 
-        match files::save(path, &self.workbook, &self.sheet_name) {
+        // The sheet a single-table format such as CSV writes is the active one.
+        let active_name = self.active_name().to_string();
+
+        // Every sheet, in tab order, as the writer's named sources.
+        let sheets: Vec<(&str, &Workbook)> = self
+            .sheets
+            .iter()
+            .map(|sheet| (sheet.name.as_str(), &sheet.workbook))
+            .collect();
+
+        match files::save(path, &sheets, &active_name) {
             Ok(result) => {
                 let name = path
                     .file_name()
@@ -1418,11 +1965,11 @@ impl PgSheetsApp {
                     .to_string();
 
                 self.path = Some(path.to_path_buf());
-                self.saved_revision = self.workbook.revision();
+                self.saved_revision = self.book().revision();
                 self.dirty = false;
 
-                // The file on disk now holds exactly one worksheet, so later saves can be in place.
-                self.worksheet_count = 1;
+                // The file on disk now holds every sheet, so later saves can be in place.
+                self.dropped_sheets = 0;
 
                 let mut warnings = result.warnings.clone();
 

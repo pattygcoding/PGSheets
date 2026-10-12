@@ -96,9 +96,9 @@ it was, so saving never loses a formula this app cannot compute. When you *impor
 names it found are listed as warnings in the status bar, which is the quickest way to see what a real
 file was relying on.
 
-The function library covers the common ground rather than the long tail. There is no `XLOOKUP` or
-`LOOKUP`, no `TEXT`, `SEARCH` or `TEXTBEFORE`, no `DATE`, `TODAY` or `NOW`, and no array or
-spill semantics. [functions.md](functions.md) lists what *is* there, and
-[limitations.md](limitations.md) explains the gaps.
+The function library covers the common ground rather than the long tail. There is no array or spill
+semantics — every function works cell by cell — and no `DATE`, `TODAY` or `NOW`.
+[functions.md](functions.md) lists what *is* there, and [limitations.md](limitations.md) explains the
+gaps.
 
 Next: [functions.md](functions.md) for every function with its arguments.

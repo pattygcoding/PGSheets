@@ -5,11 +5,12 @@
 | Part | What it shows |
 |---|---|
 | **Menu bar** | File, Edit, Sheet. Every command is here, including ones without a key. |
-| **Formatting toolbar** | Bold, italic, underline, alignment, wrap and text colour for the selection. Each button shows whether the **active cell** already has that setting. |
+| **Ribbon** | History, clipboard, font and fill, alignment and number commands for the selection, in labelled groups. Each control shows whether the **active cell** already has that setting. |
 | **Name box** | The active cell (`C4`) or, when a range is selected, the range (`B2:D5`). It is a display, not an input — you cannot type a reference into it. |
 | **Formula bar** | The **raw input** of the active cell: what was typed, so `=SUM(B2:B4)` shows as `=SUM(B2:B4)` rather than as its result. Editing here and pressing **Enter** writes the cell. |
 | **Column and row headers** | `A`, `B`, `C`… across the top, `1`, `2`, `3`… down the side. Clicking one selects that whole column or row. |
 | **Grid** | The sheet itself. Every visible cell is painted in one pass, so it stays responsive on large sheets. |
+| **Sheet tabs** | One tab per worksheet, along the bottom, with `+` and `-` to add and remove one. Click a tab to switch; double-click it to rename. |
 | **Status bar** | Messages on the left; on the right, a Count / Sum / Average of the numbers you have selected. |
 | **Scroll bars** | The sheet is 1,048,576 rows by 16,384 columns, so both bars span that whole extent. |
 
@@ -70,6 +71,22 @@ Count is the number of *numbers*, so text cells in the range are not counted.
 - **Scroll bars** drag, click the trough, or use the arrows on the ends.
 - Clicking a cell that is partly off-screen does not scroll, and the selection is not clipped by the
   viewport — a range may extend beyond what you can see.
+
+## Worksheets
+
+A workbook holds any number of worksheets, shown as tabs along the bottom.
+
+| Action | How |
+|---|---|
+| **Switch** | Click a tab. The grid, the formula bar and the selection reset for that sheet. |
+| **Add** | The `+` button, or **Sheet → Insert Sheet**. The new sheet is empty and becomes active. |
+| **Rename** | Double-click a tab, or **Sheet → Rename Sheet**, then type a name. An empty name, or one already in use, is refused. |
+| **Delete** | The `-` button, or **Sheet → Delete Sheet**. The last remaining sheet cannot be deleted. |
+
+Each worksheet keeps its own cells, its own formulas and its own undo history, so undoing on one sheet
+never touches another. A formula never refers across sheets — the language has no sheet reference — so
+a formula on one tab sees only the cells on that tab. Every worksheet is saved, so switching tabs and
+pressing **Ctrl+S** keeps the whole workbook.
 
 ## An empty sheet and a populated one
 

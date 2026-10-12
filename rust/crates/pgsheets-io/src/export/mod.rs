@@ -17,6 +17,19 @@ pub use xlsx::XlsxWriter;
 
 use super::import::extension_of;
 
+/// A named worksheet as an exporter sees it.
+///
+/// A document is a list of these, so a writer that can hold several sheets — xlsx — receives them all,
+/// while one that cannot — delimited text — writes the single sheet the options name.
+#[derive(Clone, Copy)]
+pub struct SheetRef<'a> {
+    /// The name shown on the tab.
+    pub name: &'a str,
+
+    /// The cells of the sheet.
+    pub source: &'a dyn ExportSource,
+}
+
 /// Why an export could not be written.
 #[derive(Debug)]
 pub enum ExportError {
@@ -70,6 +83,30 @@ pub trait SpreadsheetExporter {
         source: &dyn ExportSource,
         options: &ExportOptions,
     ) -> Result<ExportResult, ExportError>;
+
+    /// Writes a whole document: one or more named worksheets.
+    ///
+    /// The default writes the single sheet whose name matches [`ExportOptions::sheet_name`] — or the
+    /// first, when none does — through [`SpreadsheetExporter::export`]. That is all a single-table
+    /// format such as CSV can hold; a format that can carry several sheets overrides this rather than
+    /// the single-sheet method.
+    fn export_workbook(
+        &self,
+        writer: &mut dyn WriteSeek,
+        file_name: &str,
+        sheets: &[SheetRef<'_>],
+        options: &ExportOptions,
+    ) -> Result<ExportResult, ExportError> {
+        let chosen = sheets
+            .iter()
+            .find(|sheet| sheet.name == options.sheet_name)
+            .or_else(|| sheets.first());
+
+        match chosen {
+            Some(sheet) => self.export(writer, file_name, sheet.source, options),
+            None => Err(ExportError::Io("the document holds no worksheets".to_string())),
+        }
+    }
 }
 
 /// Chooses a writer for a file name.
@@ -122,6 +159,18 @@ impl SheetExporter {
             .map(|exporter| exporter.export(writer, file_name, source, options))
     }
 
+    /// Writes a whole document, or `None` when no writer claims the file name.
+    pub fn export_workbook(
+        &self,
+        file_name: &str,
+        writer: &mut dyn WriteSeek,
+        sheets: &[SheetRef<'_>],
+        options: &ExportOptions,
+    ) -> Option<Result<ExportResult, ExportError>> {
+        self.resolve(file_name)
+            .map(|exporter| exporter.export_workbook(writer, file_name, sheets, options))
+    }
+
     /// File-picker patterns for every registered writer.
     pub fn patterns(&self) -> Vec<String> {
         let mut patterns: Vec<String> = self
@@ -138,27 +187,26 @@ impl SheetExporter {
 
     /// Whether a document loaded from a file may be written back over it.
     ///
-    /// Saving writes a single worksheet and truncates the target, so a workbook that held more than
-    /// one worksheet has to go through Save As instead: writing in place would destroy every sheet
-    /// that was never loaded. This is the same rule that already sends an `.xlsm` save to Save As,
-    /// because a VBA project cannot be produced — a format this app cannot fully write is never
-    /// overwritten in place.
-    pub fn can_save_in_place(loaded_worksheet_count: i32) -> bool {
-        loaded_worksheet_count <= 1
+    /// Every worksheet is read and every worksheet is written, so a workbook of many sheets saves in
+    /// place as readily as one of a single sheet. What still sends a save to Save As is a sheet this
+    /// app cannot represent — a chartsheet or a macro sheet, counted as `dropped_sheets` by the
+    /// importer — because writing over the file would destroy it. The same rule sends an `.xlsm` save
+    /// to Save As, since a VBA project cannot be produced.
+    pub fn can_save_in_place(dropped_sheets: i32) -> bool {
+        dropped_sheets <= 0
     }
 
-    /// What a single-worksheet save leaves behind, or `None` when nothing is lost.
+    /// What a save leaves behind, or `None` when nothing is lost.
     ///
     /// The caller surfaces this as a warning, so the loss is stated rather than discovered later.
-    pub fn describe_lost_worksheets(loaded_worksheet_count: i32, written_sheet: &str) -> Option<String> {
-        if loaded_worksheet_count <= 1 {
+    pub fn describe_lost_sheets(dropped_sheets: i32) -> Option<String> {
+        if dropped_sheets <= 0 {
             return None;
         }
 
         Some(format!(
-            "only the '{written_sheet}' worksheet was written; the other {} worksheet(s) in the file \
-             that was opened are not preserved.",
-            loaded_worksheet_count - 1
+            "{dropped_sheets} sheet(s) in the file that was opened are not worksheets and were not \
+             preserved."
         ))
     }
 }

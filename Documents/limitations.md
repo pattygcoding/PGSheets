@@ -6,14 +6,15 @@ constraint is more useful than a surprise.
 
 ## Not built yet
 
-- **Multiple worksheets.** Only the first sheet of a workbook is read, and only one is written. There
-  are no sheet tabs. A workbook with more than one sheet is never saved over in place, so opening one
-  and pressing **Ctrl+S** asks for a new file instead of destroying the sheets that were not loaded.
-- **Most cell formatting.** Fonts (family and size), borders, the cell fill, merged cells and column
-  widths are not read, shown or written. Two things are the exception. The **number format** is one,
-  because it changes what a value *means*, not just how it looks. The other is the **simple text
-  styles** — bold, italic, underline, horizontal alignment, text colour and wrap — which the toolbar
-  sets and which round-trip through a `.xlsx` style table.
+- **Chartsheets and macro sheets.** A sheet that is not a worksheet has no cells to hold and is not
+  read or written, so a workbook that holds one is never saved over in place: **Ctrl+S** asks for a
+  new file rather than destroying the sheet. Ordinary worksheets, however many there are, all
+  round-trip, and the tabs along the bottom switch, add, rename and delete them.
+- **Most cell formatting.** Fonts (family and size), borders, merged cells and column widths are not read,
+  shown or written. Two things are the exception. The **number format** is one, because it changes what a
+  value *means*, not just how it looks. The other is the **simple styles** — bold, italic, underline,
+  horizontal alignment, text colour, the background fill and wrap — which the ribbon sets and which
+  round-trip through a `.xlsx` style table.
 - **Column and row resizing.** Every column is 100 pixels and every row 24. A **wrapped** cell therefore
   wraps to its column's width but is clipped by its row rather than growing it taller — wrap is a
   rendering choice, not an auto-height one.
@@ -24,10 +25,10 @@ constraint is more useful than a surprise.
 
 ## Where the engine differs from a full spreadsheet
 
-- **The function library covers the common ground, not the long tail** — 83 functions. There is no
-  `XLOOKUP`, `LOOKUP`, `TEXT`, `SEARCH` or `TEXTBEFORE`, and no array or spill semantics:
-  `SUMPRODUCT` needs equally sized ranges. A function that is missing evaluates to `#NAME?`, and
-  importing a file lists the missing names as warnings.
+- **The function library covers the common ground, not the long tail** — 100 functions. There is no
+  array or spill semantics: every function works cell by cell, and `SUMPRODUCT` needs equally sized
+  ranges. A function that is missing evaluates to `#NAME?`, and importing a file lists the missing
+  names as warnings.
 - **No `DATE`, `TODAY` or `NOW`.** A formula cannot give its own result a number format, so a
   produced date would display as a bare serial unless the cell had already been date-formatted by
   hand. This app does not guess a format, so it does not offer the function.
@@ -50,8 +51,8 @@ constraint is more useful than a surprise.
 
 ## File fidelity
 
-- **One worksheet.** See above. The consequence worth repeating: opening a multi-sheet workbook and
-  saving sends you to Save As.
+- **Chartsheets and macro sheets.** See above. Worksheets all round-trip; a sheet this app cannot
+  represent sends a save to Save As.
 - **`.xlsm` files cannot be saved** — a VBA project cannot be produced, so **Ctrl+S** falls through to
   Save As as `.xlsx`.
 - **CSV loses what it cannot express.** A formula is written as its text, a date as text, and neither
@@ -66,8 +67,8 @@ constraint is more useful than a surprise.
   back unchanged, so a file does not lose them.
 - **`?` padding is not reproduced,** so a `?` placeholder does not align decimal points.
 - **A cell's style carries more than this app reads.** A number format, and bold, italic, underline,
-  horizontal alignment, text colour and wrap, round-trip; the font, the border and the cell fill do not,
-  so a cell with a custom font or a border comes back in the default face with no border.
+  horizontal alignment, text colour, the background fill and wrap, round-trip; the font and the border do
+  not, so a cell with a custom font or a border comes back in the default face with no border.
 - **Another application accepting our files is verified by hand.** The automated tests prove the
   output is structurally correct and that this app can read it back; whether Excel or LibreOffice
   opens it without complaint is a manual check.
@@ -91,8 +92,8 @@ These are the points where behaviour is deliberately capped rather than unbounde
   type next, which is what makes "format the column, then fill it in" work.
 - **Ctrl+A selects the used range, not the whole sheet.** Selecting 17 billion empty cells is almost
   never what you meant.
-- **Saving a multi-sheet workbook asks for a new file** rather than overwriting it. Refusing to
-  destroy data you cannot see beats a quiet success.
+- **Saving a workbook with a chartsheet or a macro sheet asks for a new file** rather than overwriting
+  it. Refusing to destroy data you cannot see beats a quiet success.
 - **Inserting rows is refused** when it would push data past the last row of the sheet. Losing cells
   silently would be worse than a message.
 - **An unreadable formula is left alone.** Not rewriting what you do not understand is the safer

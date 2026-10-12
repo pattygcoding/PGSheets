@@ -34,9 +34,9 @@ fn cleanup(path: &Path) {
     }
 }
 
-/// Writes a workbook under the worksheet name a new document uses.
+/// Writes a single-sheet workbook under the worksheet name a new document uses.
 fn save(path: &Path, workbook: &Workbook) -> Result<pgsheets_io::ExportResult, String> {
-    files::save(path, workbook, "Sheet1")
+    files::save(path, &[("Sheet1", workbook)], "Sheet1")
 }
 
 /// A workbook with a little of everything: text, a number, a formula and a formatted date.
@@ -62,7 +62,7 @@ fn a_workbook_comes_back_from_a_file_unchanged() {
     let imported = files::open(&path).expect("the file should be read");
     let mut restored = files::new_workbook();
 
-    imported.write_into(&mut restored);
+    imported.sheets[0].write_into(&mut restored);
 
     assert_eq!(restored.raw_input(0, 0), "hello");
     assert_eq!(restored.display_value(3, 0), "5", "the formula was recalculated");
@@ -191,7 +191,7 @@ fn delimited_text_goes_around_the_trip_too() {
     let imported = files::open(&path).expect("the file should be read");
     let mut restored = files::new_workbook();
 
-    imported.write_into(&mut restored);
+    imported.sheets[0].write_into(&mut restored);
 
     assert_eq!(restored.raw_input(0, 0), "hello");
     assert_eq!(
@@ -213,7 +213,7 @@ fn an_empty_workbook_writes_an_empty_file() {
 
     let imported = files::open(&path).expect("the file should be read");
 
-    assert!(imported.cells.is_empty());
+    assert!(imported.sheets[0].cells.is_empty());
     assert_eq!(imported.result.rows, 0);
 
     cleanup(&path);
@@ -239,7 +239,7 @@ fn a_cell_style_comes_back_from_a_file() {
     let imported = files::open(&path).expect("the file should be read");
     let mut restored = files::new_workbook();
 
-    imported.write_into(&mut restored);
+    imported.sheets[0].write_into(&mut restored);
 
     let style = restored
         .cell_style(0, 0)
@@ -248,6 +248,40 @@ fn a_cell_style_comes_back_from_a_file() {
     assert!(style.bold);
     assert_eq!(style.align, HorizontalAlign::Right);
     assert_eq!(restored.raw_input(0, 0), "bold");
+
+    cleanup(&path);
+}
+
+#[test]
+fn a_multi_sheet_workbook_goes_around_the_trip() {
+    let path = temporary("xlsx");
+
+    let mut first = files::new_workbook();
+    first.set_raw_input(0, 0, "alpha");
+
+    let mut second = files::new_workbook();
+    second.set_raw_input(0, 0, "beta");
+
+    let sheets: [(&str, &Workbook); 2] = [("Alpha", &first), ("Beta", &second)];
+
+    files::save(&path, &sheets, "Beta").expect("the file should be written");
+
+    let imported = files::open(&path).expect("the file should be read");
+
+    // Both worksheets come back, in order, with their own cells.
+    assert_eq!(imported.sheets.len(), 2);
+    assert_eq!(imported.result.worksheet_count, 2);
+
+    assert_eq!(imported.sheets[0].name, "Alpha");
+    assert_eq!(imported.sheets[1].name, "Beta");
+
+    let mut restored_first = files::new_workbook();
+    imported.sheets[0].write_into(&mut restored_first);
+    assert_eq!(restored_first.raw_input(0, 0), "alpha");
+
+    let mut restored_second = files::new_workbook();
+    imported.sheets[1].write_into(&mut restored_second);
+    assert_eq!(restored_second.raw_input(0, 0), "beta");
 
     cleanup(&path);
 }

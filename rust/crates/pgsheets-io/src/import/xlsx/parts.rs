@@ -18,7 +18,23 @@ pub struct SheetPart {
 
     /// The path of the part inside the package.
     pub path: String,
+
+    /// Whether this sheet is a worksheet. A chartsheet or a macro sheet is not, and cannot be
+    /// represented as cells, so the importer skips it and the caller must not save over the file.
+    pub is_worksheet: bool,
 }
+
+/// A relationship target together with the kind it claims to be.
+pub struct Relationship {
+    /// The resolved path of the part inside the package.
+    pub target: String,
+
+    /// The relationship type URI, which is what tells a worksheet from a chart sheet.
+    pub kind: String,
+}
+
+/// The suffix every worksheet relationship type ends with.
+const WORKSHEET_RELATIONSHIP_SUFFIX: &str = "/worksheet";
 
 /// Reads the workbook part, resolving each sheet to the path its relationship points at.
 pub fn read_workbook_sheets<R: ReadSeek>(
@@ -40,25 +56,34 @@ pub fn read_workbook_sheets<R: ReadSeek>(
 
         let sheet_name = attribute(attributes, "name").unwrap_or_else(|| "Sheet1".to_string());
 
-        let path = attribute(attributes, "r:id")
-            .and_then(|id| relationships.get(&id).cloned())
+        let relationship = attribute(attributes, "r:id").and_then(|id| relationships.get(&id));
+
+        let path = relationship
+            .map(|relationship| relationship.target.clone())
             .unwrap_or_else(|| "xl/worksheets/sheet1.xml".to_string());
+
+        // A sheet with no relationship to check is assumed to be a worksheet, which is what every
+        // workbook written here and by Excel has.
+        let is_worksheet = relationship
+            .map(|relationship| relationship.kind.ends_with(WORKSHEET_RELATIONSHIP_SUFFIX))
+            .unwrap_or(true);
 
         sheets.push(SheetPart {
             name: sheet_name,
             path,
+            is_worksheet,
         });
     });
 
     sheets
 }
 
-/// Reads a `.rels` part into an id-to-path map.
+/// Reads a `.rels` part into an id-to-relationship map.
 pub fn read_relationships<R: ReadSeek>(
     archive: &mut Archive<R>,
     part_path: &str,
     base_directory: &str,
-) -> HashMap<String, String> {
+) -> HashMap<String, Relationship> {
     let mut map = HashMap::new();
 
     let Some(text) = archive.read_text(part_path) else {
@@ -81,7 +106,15 @@ pub fn read_relationships<R: ReadSeek>(
             None => format!("{base_directory}{target}"),
         };
 
-        map.insert(id, resolved);
+        let kind = attribute(attributes, "Type").unwrap_or_default();
+
+        map.insert(
+            id,
+            Relationship {
+                target: resolved,
+                kind,
+            },
+        );
     });
 
     map

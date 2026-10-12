@@ -15,12 +15,15 @@ use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use pgsheets_core::store::ImportSink;
 use pgsheets_core::style::CellStyle;
 use pgsheets_formulas::Engine;
-use pgsheets_io::{ExportOptions, ExportResult, ImportResult, ImporterRegistry, SheetExporter};
+use pgsheets_io::{ExportOptions, ExportResult, ImportResult, ImporterRegistry, SheetExporter, SheetRef};
 use pgsheets_sheet::Workbook;
 
-/// A file that has been read, as rows that can cross a thread boundary.
-#[derive(Debug)]
-pub struct Imported {
+/// One worksheet a file produced, as rows that can cross a thread boundary.
+#[derive(Debug, Default)]
+pub struct ImportedSheet {
+    /// The name shown on the tab.
+    pub name: String,
+
     /// Non-empty cells, in no particular order.
     pub cells: Vec<(i32, i32, String)>,
 
@@ -29,30 +32,9 @@ pub struct Imported {
 
     /// Styles, which a reader passes alongside the values so a bold cell stays bold.
     pub styles: Vec<(i32, i32, CellStyle)>,
-
-    /// What the reader reported: the used extent, the sheet name, the warnings.
-    pub result: ImportResult,
 }
 
-impl ImportSink for Imported {
-    fn set_raw_input(&mut self, row: i32, column: i32, raw_input: &str) {
-        self.cells.push((row, column, raw_input.to_string()));
-    }
-
-    fn set_number_format(&mut self, row: i32, column: i32, number_format: Option<&str>) {
-        if let Some(number_format) = number_format {
-            self.formats.push((row, column, number_format.to_string()));
-        }
-    }
-
-    fn set_cell_style(&mut self, row: i32, column: i32, style: Option<&CellStyle>) {
-        if let Some(style) = style.filter(|style| !style.is_default()) {
-            self.styles.push((row, column, *style));
-        }
-    }
-}
-
-impl Imported {
+impl ImportedSheet {
     /// Writes the rows into a workbook, inside one bulk update.
     ///
     /// The bulk update is what makes an import cost one recalculation rather than one per cell, which is
@@ -74,6 +56,47 @@ impl Imported {
         }
 
         workbook.end_bulk_update();
+    }
+}
+
+/// A file that has been read: the worksheets it held, and what the reader reported.
+#[derive(Debug)]
+pub struct Imported {
+    /// Every worksheet, in the order the file listed them.
+    pub sheets: Vec<ImportedSheet>,
+
+    /// What the reader reported: the used extent, the sheet names, the warnings.
+    pub result: ImportResult,
+}
+
+impl ImportSink for Imported {
+    /// A cell belongs to the worksheet most recently announced, which is why the rows are grouped by
+    /// [`ImportSink::begin_sheet`] rather than all landing in one list.
+    fn set_raw_input(&mut self, row: i32, column: i32, raw_input: &str) {
+        if let Some(sheet) = self.sheets.last_mut() {
+            sheet.cells.push((row, column, raw_input.to_string()));
+        }
+    }
+
+    fn set_number_format(&mut self, row: i32, column: i32, number_format: Option<&str>) {
+        if let (Some(number_format), Some(sheet)) = (number_format, self.sheets.last_mut()) {
+            sheet.formats.push((row, column, number_format.to_string()));
+        }
+    }
+
+    fn set_cell_style(&mut self, row: i32, column: i32, style: Option<&CellStyle>) {
+        if let (Some(style), Some(sheet)) =
+            (style.filter(|style| !style.is_default()), self.sheets.last_mut())
+        {
+            sheet.styles.push((row, column, *style));
+        }
+    }
+
+    fn begin_sheet(&mut self, name: &str) {
+        self.sheets.push(ImportedSheet {
+            name: name.to_string(),
+            ..Default::default()
+        });
     }
 }
 
@@ -137,9 +160,7 @@ fn read(path: &Path) -> Result<Imported, String> {
 
     let registry = ImporterRegistry::standard();
     let mut imported = Imported {
-        cells: Vec::new(),
-        formats: Vec::new(),
-        styles: Vec::new(),
+        sheets: Vec::new(),
         result: ImportResult::new(),
     };
 
@@ -152,23 +173,32 @@ fn read(path: &Path) -> Result<Imported, String> {
     Ok(imported)
 }
 
-/// Writes a workbook to a file, under a given worksheet name, reporting everything lost on the way.
+/// Writes a document to a file, reporting everything lost on the way.
 ///
-/// The document is written beside its destination and then moved into place, so a writer that fails
-/// halfway leaves the file that was already there untouched. Creating the destination first would
-/// truncate it, and a failed save would then have destroyed a perfectly good file.
-pub fn save(path: &Path, workbook: &Workbook, sheet_name: &str) -> Result<ExportResult, String> {
+/// `sheets` are in tab order, and `active_name` names the sheet a single-table format such as CSV
+/// writes. The document is written beside its destination and then moved into place, so a writer that
+/// fails halfway leaves the file that was already there untouched. Creating the destination first
+/// would truncate it, and a failed save would then have destroyed a perfectly good file.
+pub fn save(path: &Path, sheets: &[(&str, &Workbook)], active_name: &str) -> Result<ExportResult, String> {
     let file_name = file_name_of(path)?;
 
     let staging = staging_path(path);
     let mut file = File::create(&staging).map_err(|error| describe(&staging, &error))?;
 
     let options = ExportOptions {
-        sheet_name: sheet_name.to_string(),
+        sheet_name: active_name.to_string(),
         ..Default::default()
     };
 
-    let outcome = SheetExporter::standard().export(&file_name, &mut file, workbook, &options);
+    let refs: Vec<SheetRef> = sheets
+        .iter()
+        .map(|(name, workbook)| SheetRef {
+            name,
+            source: *workbook,
+        })
+        .collect();
+
+    let outcome = SheetExporter::standard().export_workbook(&file_name, &mut file, &refs, &options);
 
     let result = match outcome {
         Some(Ok(result)) => result,

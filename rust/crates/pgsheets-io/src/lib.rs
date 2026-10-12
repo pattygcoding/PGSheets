@@ -12,5 +12,5 @@ pub mod ooxml;
 pub mod xml;
 pub mod zip;
 
-pub use export::{ExportOptions, ExportResult, SheetExporter, SpreadsheetExporter};
+pub use export::{ExportOptions, ExportResult, SheetExporter, SheetRef, SpreadsheetExporter};
 pub use import::{ImportError, ImportResult, ImporterRegistry, SpreadsheetImporter};

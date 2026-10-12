@@ -8,7 +8,7 @@ use pgsheets_io::export::ExportOptions;
 use pgsheets_io::export::XlsxWriter;
 use pgsheets_io::import::XlsxImporter;
 use pgsheets_io::zip::{Archive, PackageWriter};
-use pgsheets_io::{SpreadsheetExporter, SpreadsheetImporter};
+use pgsheets_io::{SheetRef, SpreadsheetExporter, SpreadsheetImporter};
 use pgsheets_testkit::{MemorySource, RecordingSink};
 
 /// A source with one of everything the writer has to represent.
@@ -299,6 +299,86 @@ fn the_style_table_records_a_font_and_an_alignment() {
     assert!(styles.contains("<cellXfs count=\"2\">"), "{styles}");
     assert!(styles.contains("applyFont=\"1\""), "{styles}");
     assert!(styles.contains("horizontal=\"center\""), "{styles}");
+}
+
+#[test]
+fn a_workbook_of_several_sheets_round_trips() {
+    let mut first = MemorySource::new();
+    first.set("A1", "one");
+
+    let mut second = MemorySource::new();
+    second.set("A1", "two");
+    second.set("B2", "42");
+
+    let sheets = [
+        SheetRef {
+            name: "Alpha",
+            source: &first,
+        },
+        SheetRef {
+            name: "Beta",
+            source: &second,
+        },
+    ];
+
+    let mut buffer = Cursor::new(Vec::new());
+
+    let result = XlsxWriter::new()
+        .export_workbook(&mut buffer, "book.xlsx", &sheets, &ExportOptions::new())
+        .expect("the workbook should write");
+
+    assert_eq!(result.cells_written, 3, "every sheet's cells are counted");
+
+    // The package holds a part for each sheet, and the workbook names both.
+    let bytes = buffer.into_inner();
+    let mut archive = Archive::open(Cursor::new(bytes.clone())).expect("the package should open");
+
+    assert!(archive.has("xl/worksheets/sheet1.xml"));
+    assert!(archive.has("xl/worksheets/sheet2.xml"));
+
+    let workbook = archive
+        .read_text("xl/workbook.xml")
+        .expect("the part should read");
+    assert!(workbook.contains("name=\"Alpha\""), "{workbook}");
+    assert!(workbook.contains("name=\"Beta\""), "{workbook}");
+
+    // And both sheets read back, in order.
+    let mut sink = RecordingSink::new();
+    let result = XlsxImporter::new()
+        .import(&mut Cursor::new(bytes), &mut sink)
+        .expect("the workbook should read");
+
+    assert_eq!(sink.sheets, vec!["Alpha".to_string(), "Beta".to_string()]);
+    assert_eq!(result.sheet_names, vec!["Alpha", "Beta"]);
+    assert_eq!(result.worksheet_count, 2);
+    assert_eq!(result.sheet_name.as_deref(), Some("Alpha"));
+    assert_eq!(result.cells_imported, 3);
+}
+
+#[test]
+fn a_fill_survives_the_round_trip() {
+    let mut source = MemorySource::new();
+
+    source.set_styled(
+        "A1",
+        "shaded",
+        CellStyle::DEFAULT.with_fill(Some([0x00, 0x70, 0xC0])),
+    );
+
+    let bytes = write(&source, &ExportOptions::new());
+    let (sink, _) = read(bytes.clone());
+
+    let style = sink.get_style("A1").expect("the style should come back");
+    assert_eq!(style.fill, Some([0x00, 0x70, 0xC0]));
+
+    // The package carries the fill as a solid pattern after the two entries the specification reserves.
+    let mut archive = Archive::open(Cursor::new(bytes)).expect("the package should open");
+    let styles = archive.read_text("xl/styles.xml").expect("the part should read");
+
+    assert!(styles.contains("<fills count=\"3\">"), "{styles}");
+    assert!(styles.contains("patternType=\"solid\""), "{styles}");
+    assert!(styles.contains("rgb=\"FF0070C0\""), "{styles}");
+    assert!(styles.contains("applyFill=\"1\""), "{styles}");
 }
 
 /// A minimal workbook part, for hand-built packages.

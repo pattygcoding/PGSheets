@@ -26,12 +26,13 @@ involved. From it, it takes:
 | Booleans | As `TRUE` / `FALSE` |
 | Formulas | As formulas, re-evaluated by the local engine; the cached result is used instead if you ask for values |
 | Number formats | From the workbook's style table, so a date arrives as a serial with its date format |
-| Cell styles | Bold, italic, underline, horizontal alignment, text colour and wrap, from the same style table |
+| Cell styles | Bold, italic, underline, horizontal alignment, text colour, the background fill and wrap, from the same style table |
 | Sheet name | Kept, and used as the worksheet name when the sheet is saved |
 
-**Only the first worksheet is read.** A workbook with more than one sheet is reported as a warning,
-and — importantly — such a file is then never saved over in place, because writing would destroy the
-sheets that were never loaded. See *Saving* below.
+**Every worksheet is read**, and every worksheet is written back, so a multi-sheet workbook round-trips
+whole. A sheet that is not a worksheet — a chartsheet or a macro sheet — is the exception: it cannot be
+represented as cells, so it is skipped with a warning and the file is then never saved over in place.
+See *Saving* below.
 
 Functions the local engine does not implement become `#NAME?`, and the names are listed in the
 status bar so you can see what the file was relying on. The formula text is kept either way, so
@@ -65,16 +66,17 @@ There is no header row to declare: the first line is data, so a CSV of `Name,Amo
 ### `.xlsx`
 
 Writes a complete but minimal package: content types, relationships, workbook, a style table sized to
-the number formats, fonts and alignments actually used, and one worksheet using inline strings. The
-style table declares only what the sheet needs, numbered from the first id the specification leaves free.
+the number formats, fonts and alignments actually used across every sheet, and one part per worksheet
+using inline strings. The style table declares only what the cells need, numbered from the first id the
+specification leaves free.
 
 | Preserved | Not preserved |
 |---|---|
-| Values, with numeric-looking literals normalised the way a spreadsheet normalises them | Fonts (family and size), borders, the cell fill |
+| Values, with numeric-looking literals normalised the way a spreadsheet normalises them | Fonts (family and size), borders |
 | Raw input, so formulas stay formulas | Merged cells and column widths |
-| Number formats | Other worksheets |
-| Bold, italic, underline, horizontal alignment, text colour and wrap | Macros |
-| The worksheet name | |
+| Number formats | Chartsheets, macro sheets and other non-worksheet sheets |
+| Bold, italic, underline, horizontal alignment, text colour, the background fill and wrap | Macros |
+| Every worksheet, and every worksheet name | |
 
 Formula results that are *errors* are deliberately left uncached, so another application recalculates
 them rather than inheriting this engine's `#NAME?` for a function it does not implement.
@@ -91,13 +93,13 @@ survive a round trip, and text that looks like a number (which will come back as
 
 ### When Ctrl+S does *not* overwrite
 
-Saving writes **one worksheet**, and writing in place truncates the file. So two cases are sent to
+Every worksheet is written, so a multi-sheet workbook saves in place. Two cases are still sent to
 **Save As** instead, with an explanation in the status bar:
 
 1. **A macro-enabled `.xlsm` file** — a VBA project cannot be produced, and a file that silently
    dropped its macros would be a lie.
-2. **A workbook that held more than one worksheet** — overwriting would destroy the sheets that were
-   never loaded.
+2. **A workbook that held a sheet this app cannot represent** — a chartsheet or a macro sheet, which
+   has no cells to hold and would be destroyed by a save.
 
 The rule behind both is the same, and it is deliberate: *a document this app cannot write back in
 full is never overwritten in place.* After a save to a new file, in-place saving resumes, because the
@@ -113,9 +115,25 @@ What survives opening a file, changing it and saving it again:
 | Formulas | Yes | No — the text of the formula is written as text |
 | Number formats | Yes | No |
 | Dates as numbers | Yes | No — a date becomes text |
-| Bold, italic, underline, alignment, text colour, wrap | Yes | No |
-| Multiple worksheets | No — the first only | No |
-| Fonts, borders, fills, merged cells, widths | No | No |
+| Bold, italic, underline, alignment, text colour, fill, wrap | Yes | No |
+| Multiple worksheets | Yes | No — one table, so only the active sheet |
+| Fonts, borders, merged cells, widths | No | No |
+
+## Saved colours
+
+The colours you save from the ribbon's colour menu are the one thing this app keeps outside a document.
+They live in a small text file under your user configuration:
+
+| Platform | File |
+|---|---|
+| Windows | `%APPDATA%\PGSheets\colors.txt` |
+| macOS | `~/Library/Application Support/PGSheets/colors.txt` |
+| Linux and other | `$XDG_CONFIG_HOME/pgsheets/colors.txt`, or `~/.config/pgsheets/colors.txt` |
+
+One `saved #RRGGBB` line per colour, in the order they were added. Nothing else is written there: the
+recently used colours are held in memory for the session only, so applying a colour never touches the
+disk. A missing or unreadable file is simply an empty palette, and a palette that cannot be written is
+ignored rather than reported — neither is worth interrupting anyone over.
 
 ## How far this has been verified
 

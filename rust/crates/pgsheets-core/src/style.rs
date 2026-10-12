@@ -49,6 +49,10 @@ pub struct CellStyle {
     /// this crate stays free of any UI type.
     pub text_color: Option<[u8; 3]>,
 
+    /// The cell's background fill as red, green and blue, or `None` for no fill. Like the text colour
+    /// it is plain bytes, so the model keeps no UI type.
+    pub fill: Option<[u8; 3]>,
+
     /// Wrap the text to the column width rather than letting it overflow.
     pub wrap: bool,
 }
@@ -61,6 +65,7 @@ impl CellStyle {
         underline: false,
         align: HorizontalAlign::General,
         text_color: None,
+        fill: None,
         wrap: false,
     };
 
@@ -99,6 +104,12 @@ impl CellStyle {
     /// A copy with the text colour set, or cleared with `None`.
     pub fn with_text_color(mut self, text_color: Option<[u8; 3]>) -> Self {
         self.text_color = text_color;
+        self
+    }
+
+    /// A copy with the background fill set, or cleared with `None`.
+    pub fn with_fill(mut self, fill: Option<[u8; 3]>) -> Self {
+        self.fill = fill;
         self
     }
 

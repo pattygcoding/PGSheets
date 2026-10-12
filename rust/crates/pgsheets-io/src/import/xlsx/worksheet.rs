@@ -141,9 +141,11 @@ pub(super) fn parse_worksheet(
         }
     }
 
-    result.rows = max_row;
-    result.columns = max_column;
-    result.cells_imported = cells;
+    // Accumulated rather than overwritten, so a workbook of several sheets reports the largest extent
+    // and the total number of cells rather than only the last sheet's.
+    result.rows = result.rows.max(max_row);
+    result.columns = result.columns.max(max_column);
+    result.cells_imported += cells;
 
     unknown_functions.sort_by_key(|name| name.to_lowercase());
     unknown_functions.dedup_by_key(|name| name.to_lowercase());
