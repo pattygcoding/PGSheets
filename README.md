@@ -48,6 +48,9 @@ The sections below are the short version; those pages are the detail.
 - **Number formats**, from `0.00` and `#,##0.00` to `0%`, `$#,##0.00` and `yyyy-mm-dd`. A format changes
   what a cell shows without touching what it holds, so `=A1+1` on a date still means the next day. They
   are read from a `.xlsx` style table, applied from **Sheet → Number format**, and written back.
+- **Cell styles** from a toolbar above the formula bar: **bold**, *italic*, underline, horizontal
+  alignment, text colour and wrap. They live on the cell beside its number format, follow it through
+  undo and structural edits, and round-trip through a `.xlsx` font and alignment table.
 - **Files**: `.xlsx` and `.csv`/`.tsv`, both directions, written by this repository's own code.
 
 ## Building and running
@@ -65,7 +68,7 @@ commands, if you would rather be explicit:
 ```powershell
 cd rust
 cargo run  -p pgsheets-app                          # launch the app
-cargo test --workspace                              # 243 tests, headless
+cargo test --workspace                              # 260 tests, headless
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt  --all --check
 ```
@@ -90,12 +93,15 @@ earlier C#/.NET implementation.
 
 ## Not implemented
 
-Multiple sheet tabs, cell formatting (fonts, colours, borders, merged cells, column widths),
-find/replace and sorting are out of scope for this version. Saving writes one worksheet.
+Multiple sheet tabs, find/replace and sorting are out of scope for this version. Saving writes one
+worksheet.
 
-**Number formats are the exception.** They are read from a workbook's style table and written back, so a
-date or a percentage keeps its meaning through a save. Everything else about a cell's style is dropped,
-so a bold cell comes back plain.
+**Number formats and the simple cell styles are the exception to "no formatting".** Number formats are
+read from a workbook's style table and written back, so a date or a percentage keeps its meaning through
+a save. Bold, italic, underline, horizontal alignment, text colour and wrap are read and written too, so
+they survive a round trip. Everything else about a cell's style is dropped: fonts, borders, the cell
+fill, merged cells and column widths are not read, shown or written, and a CSV export carries no style
+at all.
 
 A date *imported* from a file is a serial with a date format, which is what makes it behave like a
 number. One *typed* into a cell stays the text you typed, because the raw input is kept verbatim: it

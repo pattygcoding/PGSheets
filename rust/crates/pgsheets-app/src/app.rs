@@ -7,7 +7,7 @@
 use std::path::PathBuf;
 
 use eframe::egui::{self, Key};
-use pgsheets_core::{CellAddress, CellBuffer, CellRange, CellValue};
+use pgsheets_core::{CellAddress, CellBuffer, CellRange, CellStyle, CellValue, HorizontalAlign};
 use pgsheets_io::export::csv;
 use pgsheets_io::{ExportOptions, ExportResult, SheetExporter};
 use pgsheets_sheet::{Workbook, sheet_paste};
@@ -220,6 +220,7 @@ impl PgSheetsApp {
         // its strip off the top or the bottom and leaves the rest for the next one; doing this by hand
         // with `with_layout` is what left the grid a rectangle of its own invention — a negative one.
         egui::Panel::top("menu-bar").show(ui, |ui| self.menus(ui));
+        egui::Panel::top("toolbar").show(ui, |ui| self.toolbar(ui));
         egui::Panel::top("formula-bar").show(ui, |ui| self.formula_bar(ui));
         egui::Panel::bottom("status-bar").show(ui, |ui| self.status_bar(ui));
 
@@ -467,6 +468,24 @@ pub enum Command {
 
     /// Delete the columns the selection spans.
     DeleteColumns,
+
+    /// Turn bold on or off across the selection, following the active cell.
+    ToggleBold,
+
+    /// Turn italic on or off across the selection, following the active cell.
+    ToggleItalic,
+
+    /// Turn the underline on or off across the selection, following the active cell.
+    ToggleUnderline,
+
+    /// Turn wrapping on or off across the selection, following the active cell.
+    ToggleWrap,
+
+    /// Align the selection's contents.
+    Align(HorizontalAlign),
+
+    /// Give the selection's text a colour, or clear it with `None`.
+    SetTextColor(Option<[u8; 3]>),
 }
 
 /// The formats the Sheet menu offers, labelled with the format code itself — which is what a spreadsheet
@@ -485,6 +504,11 @@ const NUMBER_FORMATS: [(&str, Option<&'static str>); 12] = [
     ("yyyy-mm-dd hh:mm", Some("yyyy-mm-dd hh:mm")),
     ("hh:mm:ss", Some("hh:mm:ss")),
 ];
+
+/// The status message for a formatting toggle, naming whether it was turned on or off.
+fn toggle_label(name: &str, on: bool) -> String {
+    format!("{name} {}", if on { "on" } else { "off" })
+}
 
 impl PgSheetsApp {
     /// Turns what the grid reported into an edit of the document.
@@ -505,6 +529,85 @@ impl PgSheetsApp {
 
             None => {}
         }
+    }
+
+    /// The formatting toolbar: the cell attributes, as buttons above the formula bar.
+    ///
+    /// Every button reads the active cell's style to show whether it is on, exactly as a spreadsheet
+    /// does, and every click goes through the same commands the menus would, so there is still one path
+    /// into the document.
+    fn toolbar(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            let style = self.active_style();
+
+            if ui
+                .selectable_label(style.bold, egui::RichText::new("B").strong())
+                .on_hover_text("Bold")
+                .clicked()
+            {
+                self.run(Command::ToggleBold);
+            }
+
+            if ui
+                .selectable_label(style.italic, egui::RichText::new("I").italics())
+                .on_hover_text("Italic")
+                .clicked()
+            {
+                self.run(Command::ToggleItalic);
+            }
+
+            if ui
+                .selectable_label(style.underline, egui::RichText::new("U").underline())
+                .on_hover_text("Underline")
+                .clicked()
+            {
+                self.run(Command::ToggleUnderline);
+            }
+
+            ui.separator();
+
+            let align = |ui: &mut egui::Ui, label: &str, value: HorizontalAlign| {
+                ui.selectable_label(style.align == value, label).clicked()
+            };
+
+            if align(ui, "Left", HorizontalAlign::Left) {
+                self.run(Command::Align(HorizontalAlign::Left));
+            }
+
+            if align(ui, "Center", HorizontalAlign::Center) {
+                self.run(Command::Align(HorizontalAlign::Center));
+            }
+
+            if align(ui, "Right", HorizontalAlign::Right) {
+                self.run(Command::Align(HorizontalAlign::Right));
+            }
+
+            ui.separator();
+
+            if ui
+                .selectable_label(style.wrap, "Wrap")
+                .on_hover_text("Wrap text to the column")
+                .clicked()
+            {
+                self.run(Command::ToggleWrap);
+            }
+
+            ui.separator();
+
+            let mut rgb = style.text_color.unwrap_or([0x20, 0x21, 0x24]);
+
+            if ui.color_edit_button_srgb(&mut rgb).changed() {
+                self.run(Command::SetTextColor(Some(rgb)));
+            }
+
+            if ui
+                .add_enabled(style.text_color.is_some(), egui::Button::new("Default"))
+                .on_hover_text("Clear the text colour")
+                .clicked()
+            {
+                self.run(Command::SetTextColor(None));
+            }
+        });
     }
 
     /// The name box and the formula bar.
@@ -887,6 +990,49 @@ impl PgSheetsApp {
             Command::InsertColumns => self.apply_structural_edit(true, false),
             Command::DeleteRows => self.apply_structural_edit(false, true),
             Command::DeleteColumns => self.apply_structural_edit(false, false),
+
+            // The toggles follow the active cell rather than flipping each cell on its own: a mixed
+            // selection becomes uniformly bold or uniformly plain, the way a spreadsheet behaves.
+            Command::ToggleBold => {
+                let bold = !self.active_style().bold;
+                self.apply_cell_style(move |style| style.with_bold(bold), &toggle_label("Bold", bold));
+            }
+
+            Command::ToggleItalic => {
+                let italic = !self.active_style().italic;
+                self.apply_cell_style(
+                    move |style| style.with_italic(italic),
+                    &toggle_label("Italic", italic),
+                );
+            }
+
+            Command::ToggleUnderline => {
+                let underline = !self.active_style().underline;
+                self.apply_cell_style(
+                    move |style| style.with_underline(underline),
+                    &toggle_label("Underline", underline),
+                );
+            }
+
+            Command::ToggleWrap => {
+                let wrap = !self.active_style().wrap;
+                self.apply_cell_style(move |style| style.with_wrap(wrap), &toggle_label("Wrap", wrap));
+            }
+
+            Command::Align(align) => {
+                self.apply_cell_style(move |style| style.with_align(align), "Aligned the selection");
+            }
+
+            Command::SetTextColor(colour) => {
+                self.apply_cell_style(
+                    move |style| style.with_text_color(colour),
+                    if colour.is_some() {
+                        "Set the text colour"
+                    } else {
+                        "Cleared the text colour"
+                    },
+                );
+            }
         }
     }
 
@@ -1020,6 +1166,54 @@ impl PgSheetsApp {
             None => format!("Cleared the number format on {touched} cell(s) in {where_}"),
             Some(code) => format!("Applied \"{code}\" to {touched} cell(s) in {where_}"),
         };
+    }
+
+    /// Applies a change of style to every populated cell in the selection, as one undo step.
+    ///
+    /// Only cells that already exist are touched, for the same reason formatting a number does not make
+    /// a cell per row of the sheet: a sparse model must not be filled in by a wide selection. A value
+    /// typed into a styled cell keeps its style.
+    fn apply_cell_style(&mut self, change: impl Fn(CellStyle) -> CellStyle, verb: &str) {
+        self.cancel_edit();
+
+        let selection = self.selection();
+
+        // The new styles are gathered first, because setting one can add or remove a cell and the walk
+        // cannot be over a list that is changing underneath it.
+        let targets: Vec<(i32, i32, CellStyle)> = self
+            .workbook
+            .populated_cells()
+            .into_iter()
+            .filter(|cell| selection.contains(cell.row, cell.column))
+            .filter_map(|cell| {
+                self.workbook
+                    .cell(cell.row, cell.column)
+                    .map(|data| (cell.row, cell.column, change(data.style())))
+            })
+            .collect();
+
+        let touched = targets.len();
+
+        self.workbook.begin_bulk_update();
+
+        for (row, column, style) in targets {
+            self.workbook.set_cell_style(row, column, style);
+        }
+
+        self.workbook.end_bulk_update();
+
+        self.after_edit();
+
+        self.status = format!("{verb} across {touched} cell(s) in {}", range_label(selection));
+    }
+
+    /// The active cell's style, which is what the toolbar's buttons show as on or off.
+    fn active_style(&self) -> CellStyle {
+        let active = self.grid.layout().active_cell();
+
+        self.workbook
+            .cell_style(active.row, active.column)
+            .unwrap_or_default()
     }
 
     /// Inserts or removes as many rows or columns as the selection spans, starting at its first row or

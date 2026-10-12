@@ -19,7 +19,7 @@ spreadsheet library — see [the ADR](Documents/adr/0001-rust-rewrite.md) for ho
 | UI framework | `eframe`/`egui` 0.36, immediate mode | "One control painting every visible cell in one pass" is what immediate mode *is* |
 | Dependencies | `eframe`, `zip`, `quick-xml`, `rfd` | `std` has neither a zip container nor an XML reader, and neither of the last two is a spreadsheet library |
 | File formats | ours | Every OOXML part, content type, relationship, style-table entry and cell serialisation, and both CSV codecs, are written here |
-| Number formats | read, written back and rendered | Everything else about a cell's style is dropped, as it always has been |
+| Cell formatting | number formats, bold/italic/underline, horizontal alignment, text colour and wrap | Rendered on the grid, stored on the cell, and round-tripped through the style table. Everything else a style carries — fonts, borders, fills, merged cells, widths — is dropped |
 
 There are no online API calls, API keys, telemetry or quota-limited services anywhere in the app. The
 only network access is one-time `cargo` restore at build time.
@@ -87,14 +87,14 @@ prefix, and it bypasses the execution policy for that one run.
 
 ## Testing
 
-243 tests, all headless — no display, no window, no dependence on the working directory. Each crate
+260 tests, all headless — no display, no window, no dependence on the working directory. Each crate
 owns its own suite:
 
 | Suite | Covers |
 |---|---|
-| `pgsheets-core/tests/` | addressing and `$` anchors, ranges, values and their coercion, literals, serial dates, undo, clipboard blocks, number formats |
+| `pgsheets-core/tests/` | addressing and `$` anchors, ranges, values and their coercion, literals, serial dates, undo, clipboard blocks, number formats, cell styles |
 | `pgsheets-formulas/tests/` | precedence-aware rendering and the formula rewriter, which is what reference rewriting turns on |
-| `pgsheets-sheet/tests/` | the sparse workbook, undo wiring, a format following its cell, structural edits, formula-aware paste, and the engine driven through a test double |
+| `pgsheets-sheet/tests/` | the sparse workbook, undo wiring, a format and a style following its cell, structural edits, formula-aware paste, and the engine driven through a test double |
 | `pgsheets-io/tests/` | CSV and xlsx readers and writers: quoting, delimiters, BOM, shared and inline strings, dates, formulas, warnings, and the package's parts and style-table counts |
 | `pgsheets-app/tests/` | the grid's geometry and its scroll bars, the widget driven by synthetic input, a whole frame of the window, and real files on disk |
 
@@ -148,7 +148,8 @@ These are load-bearing. Breaking one silently degrades correctness or performanc
    file is exactly what the grid is showing.
 9. **The workbook has exactly one mutation point.** `set_raw_input` reads the previous value, applies,
    then records an undo step; undo and redo replay through the same path so they never re-record. A
-   number format travels with its value through that pair, which is why the two never disagree. Read the
+   number format and a style travel with their value through that pair, which is why the three never
+   disagree. Read the
    previous state *before* mutating: the write goes through the very record a caller holds, so reading
    afterwards records "no change".
 10. **Undo steps follow `begin_bulk_update`.** Opening a bulk update opens an undo group and closing it
@@ -193,11 +194,15 @@ These are load-bearing. Breaking one silently degrades correctness or performanc
 
 - One worksheet is imported (the first). Multi-sheet tabs are not implemented, and a workbook with more
   than one sheet is never saved over in place — see invariant 13.
-- **Number formats round-trip; cell formatting does not.** A format code is read from the style table on
-  import and written back on export, so a date stays a date and a percentage stays a percentage. Fonts,
-  colours, borders, alignment, merged cells and column widths are not read or written at all.
-- A cell's style carries more than a number format, and only the number format is taken: a cell
-  formatted as bold but not as a number comes back plain.
+- **Number formats and the simple text styles round-trip; the rest of a style does not.** A number format
+  code, and bold, italic, underline, horizontal alignment, text colour and wrap, are read from the style
+  table on import and written back on export. Fonts (family and size), borders, the cell fill, merged
+  cells and column widths are not read or written at all, so a cell with a custom font or a border comes
+  back in the default face with no border.
+- **A CSV export carries no style.** A `.csv`/`.tsv` file has nowhere to put a number format or a style,
+  so both are lost on a text save — the same loss the format warnings already describe.
+- **Wrap has no column of its own.** A wrapped cell wraps to its column's width, but rows are still a
+  fixed height, so text taller than a row is clipped rather than pushing the row taller.
 - Because a formula has no way to give its result a number format, `DATE`, `TODAY` and `NOW` stay
   unimplemented: `=DATE(2024,3,5)` would show the bare serial 45356 unless the cell had already been
   given a date format by hand, and this app does not guess one.

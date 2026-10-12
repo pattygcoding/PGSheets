@@ -4,7 +4,7 @@
 
 | Format | Open | Save | Notes |
 |---|---|---|---|
-| `.xlsx` | Yes | Yes | The native format. Values, formulas and number formats round-trip. |
+| `.xlsx` | Yes | Yes | The native format. Values, formulas, number formats and the simple text styles round-trip. |
 | `.xlsm` | Yes | No | Macros cannot be written, so **Ctrl+S** sends you to Save As as `.xlsx`. |
 | `.csv` | Yes | Yes | Comma-separated text, UTF-8. |
 | `.tsv` | Yes | Yes | Tab-separated text. |
@@ -26,6 +26,7 @@ involved. From it, it takes:
 | Booleans | As `TRUE` / `FALSE` |
 | Formulas | As formulas, re-evaluated by the local engine; the cached result is used instead if you ask for values |
 | Number formats | From the workbook's style table, so a date arrives as a serial with its date format |
+| Cell styles | Bold, italic, underline, horizontal alignment, text colour and wrap, from the same style table |
 | Sheet name | Kept, and used as the worksheet name when the sheet is saved |
 
 **Only the first worksheet is read.** A workbook with more than one sheet is reported as a warning,
@@ -64,15 +65,16 @@ There is no header row to declare: the first line is data, so a CSV of `Name,Amo
 ### `.xlsx`
 
 Writes a complete but minimal package: content types, relationships, workbook, a style table sized to
-the number formats actually used, and one worksheet using inline strings. The style table declares
-only the formats the sheet needs, numbered from the first id the specification leaves free.
+the number formats, fonts and alignments actually used, and one worksheet using inline strings. The
+style table declares only what the sheet needs, numbered from the first id the specification leaves free.
 
 | Preserved | Not preserved |
 |---|---|
-| Values, with numeric-looking literals normalised the way a spreadsheet normalises them | Fonts, colours, borders, alignment |
+| Values, with numeric-looking literals normalised the way a spreadsheet normalises them | Fonts (family and size), borders, the cell fill |
 | Raw input, so formulas stay formulas | Merged cells and column widths |
 | Number formats | Other worksheets |
-| The worksheet name | Macros |
+| Bold, italic, underline, horizontal alignment, text colour and wrap | Macros |
+| The worksheet name | |
 
 Formula results that are *errors* are deliberately left uncached, so another application recalculates
 them rather than inheriting this engine's `#NAME?` for a function it does not implement.
@@ -111,8 +113,9 @@ What survives opening a file, changing it and saving it again:
 | Formulas | Yes | No — the text of the formula is written as text |
 | Number formats | Yes | No |
 | Dates as numbers | Yes | No — a date becomes text |
+| Bold, italic, underline, alignment, text colour, wrap | Yes | No |
 | Multiple worksheets | No — the first only | No |
-| Formatting, merged cells, widths | No | No |
+| Fonts, borders, fills, merged cells, widths | No | No |
 
 ## How far this has been verified
 

@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 
 use pgsheets_core::store::ImportSink;
+use pgsheets_core::style::CellStyle;
 use pgsheets_formulas::Engine;
 use pgsheets_io::{ExportOptions, ExportResult, ImportResult, ImporterRegistry, SheetExporter};
 use pgsheets_sheet::Workbook;
@@ -25,6 +26,9 @@ pub struct Imported {
 
     /// Number formats, which a reader passes alongside the values so a date stays a date.
     pub formats: Vec<(i32, i32, String)>,
+
+    /// Styles, which a reader passes alongside the values so a bold cell stays bold.
+    pub styles: Vec<(i32, i32, CellStyle)>,
 
     /// What the reader reported: the used extent, the sheet name, the warnings.
     pub result: ImportResult,
@@ -40,14 +44,20 @@ impl ImportSink for Imported {
             self.formats.push((row, column, number_format.to_string()));
         }
     }
+
+    fn set_cell_style(&mut self, row: i32, column: i32, style: Option<&CellStyle>) {
+        if let Some(style) = style.filter(|style| !style.is_default()) {
+            self.styles.push((row, column, *style));
+        }
+    }
 }
 
 impl Imported {
     /// Writes the rows into a workbook, inside one bulk update.
     ///
     /// The bulk update is what makes an import cost one recalculation rather than one per cell, which is
-    /// the whole reason the rows are collected first. Formats go on after the values, because a format
-    /// only means something once the cell it belongs to exists.
+    /// the whole reason the rows are collected first. Formats and styles go on after the values, because
+    /// they only mean something once the cell they belong to exists.
     pub fn write_into(&self, workbook: &mut Workbook) {
         workbook.begin_bulk_update();
 
@@ -57,6 +67,10 @@ impl Imported {
 
         for (row, column, number_format) in &self.formats {
             workbook.set_number_format(*row, *column, Some(number_format));
+        }
+
+        for (row, column, style) in &self.styles {
+            workbook.set_cell_style(*row, *column, *style);
         }
 
         workbook.end_bulk_update();
@@ -125,6 +139,7 @@ fn read(path: &Path) -> Result<Imported, String> {
     let mut imported = Imported {
         cells: Vec::new(),
         formats: Vec::new(),
+        styles: Vec::new(),
         result: ImportResult::new(),
     };
 

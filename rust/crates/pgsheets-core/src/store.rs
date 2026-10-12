@@ -2,6 +2,7 @@
 //! importer may write, and what an exporter may read.
 
 use crate::address::CellAddress;
+use crate::style::CellStyle;
 use crate::value::CellValue;
 
 /// The minimal view of cell storage the formula engine needs.
@@ -36,6 +37,12 @@ pub trait ImportSink {
     /// A separate call because the format arrives with the style rather than with the content, and
     /// most sinks have no use for it.
     fn set_number_format(&mut self, row: i32, column: i32, number_format: Option<&str>);
+
+    /// Stores the styling that applies to a cell, as read from the file alongside its value.
+    ///
+    /// Like [`ImportSink::set_number_format`], a separate call because the style arrives with the
+    /// cell's formatting rather than with its content, and most sinks have no use for it.
+    fn set_cell_style(&mut self, row: i32, column: i32, style: Option<&CellStyle>);
 }
 
 /// The minimal read-only view of cell storage that exporters need.
@@ -57,4 +64,10 @@ pub trait ExportSource {
     /// A format changes only what a cell shows, so a writer needs it to keep the grid's appearance
     /// rather than just its values.
     fn number_format(&self, row: i32, column: i32) -> Option<&str>;
+
+    /// The styling of a cell, or `None` when it has none.
+    ///
+    /// Like the number format, a style changes only what a cell looks like, so a writer needs it to
+    /// keep the grid's appearance rather than just its values.
+    fn cell_style(&self, row: i32, column: i32) -> Option<CellStyle>;
 }

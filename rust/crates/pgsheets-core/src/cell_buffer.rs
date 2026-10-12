@@ -7,6 +7,7 @@ use std::collections::HashMap;
 
 use crate::range::CellRange;
 use crate::store::ImportSink;
+use crate::style::CellStyle;
 
 /// A rectangular block of raw values, including the empty ones.
 #[derive(Default)]
@@ -73,4 +74,8 @@ impl ImportSink for CellBuffer {
     /// Ignored: a tab-separated clipboard carries values, not formats. Pasting text should not
     /// silently reformat the cells it lands on.
     fn set_number_format(&mut self, _row: i32, _column: i32, _number_format: Option<&str>) {}
+
+    /// Ignored, for the same reason as the number format: a clipboard block is text, and pasting it
+    /// should not restyle the cells it lands on.
+    fn set_cell_style(&mut self, _row: i32, _column: i32, _style: Option<&CellStyle>) {}
 }

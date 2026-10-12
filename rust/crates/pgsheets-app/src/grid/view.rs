@@ -8,8 +8,9 @@
 //! the font store's job here. What is still ours is the clipping: a cell whose text overflows its
 //! column is drawn inside a clip rectangle, so only the cells that overflow pay for one.
 
+use eframe::egui::text::{Galley, LayoutJob, TextFormat};
 use eframe::egui::{self, Color32, FontId, Key, Rect, Sense, Stroke, StrokeKind, Vec2};
-use pgsheets_core::CellRange;
+use pgsheets_core::{CellRange, CellValue, HorizontalAlign};
 use pgsheets_sheet::Workbook;
 
 use super::geometry::{Area, CellRect, GridLayout};
@@ -17,6 +18,10 @@ use super::scrollbar::{self, Scrollbar};
 
 /// Padding between a cell's border and its text.
 const CELL_PADDING: f32 = 4.0;
+
+/// How far the second pass of a bold cell is shifted. There is no bold face among the bundled fonts, so
+/// "bold" is the text drawn twice, a hair apart.
+const BOLD_OFFSET: f32 = 0.7;
 
 /// The scroll-bar track, and the thumb that moves along it.
 const TRACK_FILL: Color32 = Color32::from_rgb(0xF1, 0xF1, 0xF1);
@@ -292,6 +297,9 @@ impl GridView {
     }
 
     /// Every populated cell inside the viewport, and nothing else.
+    ///
+    /// A cell that has never been formatted keeps the fast route — one `layout_no_wrap` and a draw — so
+    /// the styling machinery is only paid for by the cells that asked for it.
     fn paint_cells(&self, painter: &egui::Painter, rect: Rect, origin: egui::Pos2, workbook: &Workbook) {
         let metrics = self.layout.metrics();
         let font = FontId::proportional(metrics.font_size);
@@ -312,30 +320,77 @@ impl GridView {
                     continue;
                 }
 
+                let style = cell.style();
                 let bounds = self.layout.cell_bounds(row, column);
                 let cell_rect = to_screen(origin, bounds);
+
                 let colour = if cell.value().is_error() {
                     ERROR_TEXT
                 } else {
-                    CELL_TEXT
+                    style
+                        .text_color
+                        .map(|[red, green, blue]| Color32::from_rgb(red, green, blue))
+                        .unwrap_or(CELL_TEXT)
                 };
 
-                let galley = painter.layout_no_wrap(text.to_owned(), font.clone(), colour);
+                let align = effective_align(style.align, cell.value());
+                let available = bounds.width - padding * 2.0;
 
-                let text_y = cell_rect.center().y - galley.size().y / 2.0;
-                let text_x = cell_rect.min.x + CELL_PADDING;
+                let galley = if style.is_default() {
+                    painter.layout_no_wrap(text.to_owned(), font.clone(), colour)
+                } else {
+                    let mut job = LayoutJob::default();
 
-                if f64::from(galley.size().x) > bounds.width - padding * 2.0 {
-                    // Only cells that actually overflow pay for a clip.
-                    painter.with_clip_rect(cell_rect.intersect(rect)).galley(
-                        egui::pos2(text_x, text_y),
-                        galley,
-                        colour,
+                    if style.wrap {
+                        // Wrapping to the column, not to the row: this app has no variable row heights,
+                        // so a wrapped cell shows what fits and clips the rest.
+                        job.wrap.max_width = available.max(1.0) as f32;
+                    }
+
+                    job.append(
+                        text,
+                        0.0,
+                        TextFormat {
+                            font_id: font.clone(),
+                            color: colour,
+                            italics: style.italic,
+                            underline: underline_stroke(style.underline, colour),
+                            ..Default::default()
+                        },
                     );
+
+                    painter.layout_job(job)
+                };
+
+                let text_width = galley.size().x;
+
+                let text_x = match align {
+                    HorizontalAlign::Right => cell_rect.max.x - CELL_PADDING - text_width,
+                    HorizontalAlign::Center => cell_rect.center().x - text_width / 2.0,
+                    _ => cell_rect.min.x + CELL_PADDING,
+                };
+
+                // Wrapped text starts at the top and grows down; a single line sits in the middle of the
+                // row, as it always has.
+                let text_y = if style.wrap {
+                    cell_rect.min.y + CELL_PADDING / 2.0
+                } else {
+                    cell_rect.center().y - galley.size().y / 2.0
+                };
+
+                let position = egui::pos2(text_x, text_y);
+
+                let overflows =
+                    style.wrap || f64::from(text_width) > available || galley.size().y > cell_rect.height();
+
+                if overflows {
+                    // Only cells that actually overflow pay for a clip.
+                    let clipped = painter.with_clip_rect(cell_rect.intersect(rect));
+                    draw_galley(&clipped, position, &galley, colour, style.bold);
                     continue;
                 }
 
-                painter.galley(egui::pos2(text_x, text_y), galley, colour);
+                draw_galley(painter, position, &galley, colour, style.bold);
             }
         }
     }
@@ -589,6 +644,46 @@ impl GridView {
         }
 
         None
+    }
+}
+
+/// Draws a laid-out cell, twice when the cell is bold.
+///
+/// There is no bold face among the bundled fonts, so bold is the same text drawn a second time a hair
+/// to the right, which thickens every stroke.
+fn draw_galley(
+    painter: &egui::Painter,
+    position: egui::Pos2,
+    galley: &std::sync::Arc<Galley>,
+    colour: Color32,
+    bold: bool,
+) {
+    painter.galley(position, galley.clone(), colour);
+
+    if bold {
+        painter.galley(position + Vec2::new(BOLD_OFFSET, 0.0), galley.clone(), colour);
+    }
+}
+
+/// The underline a cell asks for, or none.
+fn underline_stroke(underline: bool, colour: Color32) -> Stroke {
+    if underline {
+        Stroke::new(1.0, colour)
+    } else {
+        Stroke::NONE
+    }
+}
+
+/// Where a cell's text sits: the alignment it was given, or — for General — the spreadsheet default of
+/// numbers right, booleans centred and everything else left.
+fn effective_align(align: HorizontalAlign, value: &CellValue) -> HorizontalAlign {
+    match align {
+        HorizontalAlign::General => match value {
+            CellValue::Number(_) => HorizontalAlign::Right,
+            CellValue::Boolean(_) => HorizontalAlign::Center,
+            _ => HorizontalAlign::Left,
+        },
+        explicit => explicit,
     }
 }
 

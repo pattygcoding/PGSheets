@@ -10,7 +10,7 @@
 
 use eframe::egui::{self, Event, Key, Modifiers, Pos2};
 use pgsheets_app::app::{Command, PgSheetsApp};
-use pgsheets_core::CellRange;
+use pgsheets_core::{CellRange, HorizontalAlign};
 
 const WIDTH: f32 = 900.0;
 const HEIGHT: f32 = 700.0;
@@ -566,4 +566,44 @@ fn an_open_editor_keeps_the_clipboard_shortcuts_for_itself() {
 
     assert_eq!(harness.raw(0, 0), "1");
     assert_eq!(harness.raw(0, 1), "2");
+}
+
+#[test]
+fn the_toolbar_commands_style_the_active_cell() {
+    let mut harness = Harness::new();
+    harness.idle();
+    harness.blank_sheet();
+
+    harness.enter("hello");
+    harness.key(Key::ArrowUp, Modifiers::default());
+
+    harness.run(Command::ToggleBold);
+
+    let style = harness
+        .app
+        .workbook()
+        .cell_style(0, 0)
+        .expect("the cell should carry the style the toolbar applied");
+    assert!(style.bold);
+
+    // Alignment is a separate command, and the two live side by side on one cell.
+    harness.run(Command::Align(HorizontalAlign::Right));
+
+    let style = harness.app.workbook().cell_style(0, 0).unwrap();
+    assert!(style.bold, "the alignment did not clear the bold");
+    assert_eq!(style.align, HorizontalAlign::Right);
+
+    // Toggling again clears it, following the active cell.
+    harness.run(Command::ToggleBold);
+    assert_eq!(
+        harness.app.workbook().cell_style(0, 0).map(|style| style.bold),
+        Some(false)
+    );
+
+    // And the whole sequence undoes one command at a time.
+    harness.run(Command::Undo);
+    assert_eq!(
+        harness.app.workbook().cell_style(0, 0).map(|style| style.bold),
+        Some(true)
+    );
 }

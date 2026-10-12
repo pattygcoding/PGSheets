@@ -9,10 +9,14 @@ constraint is more useful than a surprise.
 - **Multiple worksheets.** Only the first sheet of a workbook is read, and only one is written. There
   are no sheet tabs. A workbook with more than one sheet is never saved over in place, so opening one
   and pressing **Ctrl+S** asks for a new file instead of destroying the sheets that were not loaded.
-- **Cell formatting.** Fonts, colours, borders, alignment, merged cells and column widths are not
-  read, shown or written. The **number format is the one exception**, because a number format changes
-  what a value *means*, not just how it looks.
-- **Column and row resizing.** Every column is 100 pixels and every row 24.
+- **Most cell formatting.** Fonts (family and size), borders, the cell fill, merged cells and column
+  widths are not read, shown or written. Two things are the exception. The **number format** is one,
+  because it changes what a value *means*, not just how it looks. The other is the **simple text
+  styles** — bold, italic, underline, horizontal alignment, text colour and wrap — which the toolbar
+  sets and which round-trip through a `.xlsx` style table.
+- **Column and row resizing.** Every column is 100 pixels and every row 24. A **wrapped** cell therefore
+  wraps to its column's width but is clipped by its row rather than growing it taller — wrap is a
+  rendering choice, not an auto-height one.
 - **Find and replace.**
 - **Sorting and filtering.**
 - **Charts, images, comments, named ranges, data validation, conditional formatting.**
@@ -50,9 +54,9 @@ constraint is more useful than a surprise.
   saving sends you to Save As.
 - **`.xlsm` files cannot be saved** — a VBA project cannot be produced, so **Ctrl+S** falls through to
   Save As as `.xlsx`.
-- **CSV loses what it cannot express.** A formula is written as its text, a date as text, and number
-  formats are not carried at all. A string that looks like a number will come back as a number —
-  leading zeros in such a field are lost. Exports report these as warnings.
+- **CSV loses what it cannot express.** A formula is written as its text, a date as text, and neither
+  number formats nor cell styles are carried at all. A string that looks like a number will come back as
+  a number — leading zeros in such a field are lost. Exports report these as warnings.
 - **Error results are not cached** when saving, on purpose: another application should recalculate
   rather than inherit `#NAME?` for a function this engine lacks.
 - **A numeric-looking literal is normalised.** Typing `007` stores the number 7, as a spreadsheet
@@ -61,8 +65,9 @@ constraint is more useful than a surprise.
   time fall back to the plain rendering on screen, but the format code itself is read and written
   back unchanged, so a file does not lose them.
 - **`?` padding is not reproduced,** so a `?` placeholder does not align decimal points.
-- **A cell's style carries more than a number format,** and only the number format is taken: a cell
-  formatted as bold but not as a number comes back plain.
+- **A cell's style carries more than this app reads.** A number format, and bold, italic, underline,
+  horizontal alignment, text colour and wrap, round-trip; the font, the border and the cell fill do not,
+  so a cell with a custom font or a border comes back in the default face with no border.
 - **Another application accepting our files is verified by hand.** The automated tests prove the
   output is structurally correct and that this app can read it back; whether Excel or LibreOffice
   opens it without complaint is a manual check.

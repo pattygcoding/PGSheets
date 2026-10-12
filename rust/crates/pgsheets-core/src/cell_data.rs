@@ -1,23 +1,26 @@
 //! A single sparse cell record: exactly what the user typed, plus what the engine computed for it.
 
 use crate::number_format;
+use crate::style::CellStyle;
 use crate::value::CellValue;
 
-/// One cell: its raw input, the number format that goes with it, and the evaluated result.
+/// One cell: its raw input, the number format and style that go with it, and the evaluated result.
 #[derive(Clone, Debug)]
 pub struct CellData {
     raw_input: String,
     number_format: Option<String>,
+    style: CellStyle,
     value: CellValue,
     display_value: String,
 }
 
 impl CellData {
-    /// Creates a cell holding raw input, with no computed result yet.
+    /// Creates a cell holding raw input, with no computed result yet and no formatting.
     pub fn new(raw_input: impl Into<String>) -> Self {
         Self {
             raw_input: raw_input.into(),
             number_format: None,
+            style: CellStyle::DEFAULT,
             value: CellValue::Empty,
             display_value: String::new(),
         }
@@ -31,6 +34,11 @@ impl CellData {
     /// The number format code for the cell, e.g. `"0.00"` or `"yyyy-mm-dd"`. `None` means General.
     pub fn number_format(&self) -> Option<&str> {
         self.number_format.as_deref()
+    }
+
+    /// The cell's styling, which is [`CellStyle::DEFAULT`] when it has none.
+    pub fn style(&self) -> CellStyle {
+        self.style
     }
 
     /// The typed result produced by the engine.
@@ -48,9 +56,18 @@ impl CellData {
         self.raw_input.starts_with('=')
     }
 
-    /// True when the cell exists only to carry a format, with no value of its own.
+    /// True when the cell exists only to carry formatting, with no value of its own.
+    ///
+    /// A cell given a number format *or* a style and then left empty still exists, because formatting
+    /// is remembered for whatever is typed next — which is what makes "format the column, then fill it
+    /// in" work.
     pub fn is_format_only(&self) -> bool {
-        self.raw_input.is_empty() && self.number_format.is_some()
+        self.raw_input.is_empty() && self.has_format()
+    }
+
+    /// True when the cell carries a number format or a non-default style.
+    pub fn has_format(&self) -> bool {
+        self.number_format.is_some() || !self.style.is_default()
     }
 
     /// Replaces the stored input.
@@ -61,6 +78,11 @@ impl CellData {
     /// Replaces the number format code. An empty code means General.
     pub fn set_number_format(&mut self, format: Option<String>) {
         self.number_format = format.filter(|code| !code.is_empty());
+    }
+
+    /// Replaces the cell's styling.
+    pub fn set_style(&mut self, style: CellStyle) {
+        self.style = style;
     }
 
     /// Stores an evaluated result, and the text the grid will show for it.

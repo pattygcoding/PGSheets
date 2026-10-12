@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 
 use pgsheets_core::store::{ExportSource, ImportSink};
-use pgsheets_core::{CellAddress, CellRange, CellValue, parse_literal};
+use pgsheets_core::{CellAddress, CellRange, CellStyle, CellValue, parse_literal};
 
 /// A workbook held in memory, as an exporter sees one.
 ///
@@ -15,7 +15,7 @@ pub struct MemorySource {
     cells: HashMap<CellAddress, MemoryCell>,
 }
 
-/// A cell held in memory: its raw input, the value it evaluates to, and its number format.
+/// A cell held in memory: its raw input, the value it evaluates to, its number format and its style.
 #[derive(Clone, Debug, Default)]
 pub struct MemoryCell {
     /// The raw input, exactly as it was written.
@@ -26,6 +26,9 @@ pub struct MemoryCell {
 
     /// The number format code, or `None` for General.
     pub format: Option<String>,
+
+    /// The cell's style; [`CellStyle::DEFAULT`] when it has none.
+    pub style: CellStyle,
 }
 
 impl MemorySource {
@@ -37,26 +40,44 @@ impl MemorySource {
     /// Puts a raw value in a cell and evaluates it with the literal rules, which is all an exporter
     /// needs: the raw input is what gets written.
     pub fn set(&mut self, a1: &str, raw: &str) -> &mut Self {
-        self.insert(a1, raw, parse_literal(raw), None)
+        self.insert(a1, raw, parse_literal(raw), None, CellStyle::DEFAULT)
     }
 
     /// Puts a value in a cell with no raw input behind it, as an imported date with a format has.
     pub fn set_value(&mut self, a1: &str, value: CellValue, format: Option<&str>) -> &mut Self {
-        self.insert(a1, "", value, format.map(str::to_string))
+        self.insert(a1, "", value, format.map(str::to_string), CellStyle::DEFAULT)
     }
 
     /// Puts a raw value in a cell and gives it a number format.
     pub fn set_formatted(&mut self, a1: &str, raw: &str, format: &str) -> &mut Self {
-        self.insert(a1, raw, parse_literal(raw), Some(format.to_string()))
+        self.insert(
+            a1,
+            raw,
+            parse_literal(raw),
+            Some(format.to_string()),
+            CellStyle::DEFAULT,
+        )
+    }
+
+    /// Puts a raw value in a cell and gives it a style, keeping the value's literal rules.
+    pub fn set_styled(&mut self, a1: &str, raw: &str, style: CellStyle) -> &mut Self {
+        self.insert(a1, raw, parse_literal(raw), None, style)
     }
 
     /// Puts a formula in a cell together with the value it evaluated to, which is what a writer sees
     /// for a cell the engine has already calculated.
     pub fn set_formula(&mut self, a1: &str, formula: &str, value: CellValue) -> &mut Self {
-        self.insert(a1, formula, value, None)
+        self.insert(a1, formula, value, None, CellStyle::DEFAULT)
     }
 
-    fn insert(&mut self, a1: &str, raw: &str, value: CellValue, format: Option<String>) -> &mut Self {
+    fn insert(
+        &mut self,
+        a1: &str,
+        raw: &str,
+        value: CellValue,
+        format: Option<String>,
+        style: CellStyle,
+    ) -> &mut Self {
         let (row, column) = CellAddress::try_parse_a1(a1).unwrap_or_else(|| panic!("bad address {a1}"));
 
         self.cells.insert(
@@ -65,6 +86,7 @@ impl MemorySource {
                 raw: raw.to_string(),
                 value,
                 format,
+                style,
             },
         );
 
@@ -113,6 +135,13 @@ impl ExportSource for MemorySource {
             .get(&CellAddress::new(row, column))
             .and_then(|cell| cell.format.as_deref())
     }
+
+    fn cell_style(&self, row: i32, column: i32) -> Option<CellStyle> {
+        self.cells
+            .get(&CellAddress::new(row, column))
+            .map(|cell| cell.style)
+            .filter(|style| !style.is_default())
+    }
 }
 
 /// An import sink that records everything it is given, for asserting on a reader's output.
@@ -123,6 +152,9 @@ pub struct RecordingSink {
 
     /// The number format of every cell, by address.
     pub formats: HashMap<CellAddress, Option<String>>,
+
+    /// The style of every cell, by address.
+    pub styles: HashMap<CellAddress, CellStyle>,
 }
 
 impl RecordingSink {
@@ -151,6 +183,13 @@ impl RecordingSink {
             .flatten()
     }
 
+    /// The style recorded for a cell, or `None` when the reader said nothing about it.
+    pub fn get_style(&self, a1: &str) -> Option<CellStyle> {
+        let (row, column) = CellAddress::try_parse_a1(a1).unwrap_or_else(|| panic!("bad address {a1}"));
+
+        self.styles.get(&CellAddress::new(row, column)).copied()
+    }
+
     /// How many cells the reader wrote to, empty ones included.
     pub fn len(&self) -> usize {
         self.cells.len()
@@ -171,6 +210,11 @@ impl ImportSink for RecordingSink {
     fn set_number_format(&mut self, row: i32, column: i32, number_format: Option<&str>) {
         self.formats
             .insert(CellAddress::new(row, column), number_format.map(str::to_string));
+    }
+
+    fn set_cell_style(&mut self, row: i32, column: i32, style: Option<&CellStyle>) {
+        self.styles
+            .insert(CellAddress::new(row, column), style.copied().unwrap_or_default());
     }
 }
 

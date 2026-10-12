@@ -41,11 +41,14 @@ can copy elsewhere.
 
 ## What you see when it opens
 
-The window is a menu bar, a name box and formula bar, the grid, a status bar, and scroll bars.
+The window is a menu bar, a formatting toolbar, a name box and formula bar, the grid, a status bar,
+and scroll bars.
 
 ```
 +--------------------------------------------------------------+
 | File  Edit  Sheet                                            |  menu
++--------------------------------------------------------------+
+| B  I  U | Left Center Right | Wrap | [colour] [Default]      |  formatting toolbar
 +--------------------------------------------------------------+
 |  B2          |  =B2+C2                                       |  name box + formula bar
 +--------------------------------------------------------------+

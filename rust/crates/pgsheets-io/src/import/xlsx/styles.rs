@@ -1,10 +1,43 @@
-//! The style table, as far as a number format goes.
+//! The style table, as far as a number format, a font and an alignment go.
 
 use std::collections::HashMap;
 
+use pgsheets_core::{CellStyle, HorizontalAlign};
+use quick_xml::Reader;
+use quick_xml::XmlVersion;
+use quick_xml::events::{BytesStart, Event};
+use quick_xml::name::QName;
+
 use crate::zip::{Archive, ReadSeek};
 
-use super::parts::for_each_element;
+/// What a cell's style index resolves to: the number format that gives its value meaning and the
+/// styling that goes with it.
+#[derive(Clone, Debug, Default)]
+pub struct CellFormat {
+    /// The number format code, or `None` for General.
+    pub number_format: Option<String>,
+
+    /// The styling; [`CellStyle::DEFAULT`] when the record carries none this reader understands.
+    pub style: CellStyle,
+}
+
+/// One `<xf>`: the font and number format it refers to, and any alignment it carries.
+#[derive(Clone, Copy, Debug, Default)]
+struct XfRecord {
+    num_fmt_id: Option<i32>,
+    font_id: i32,
+    align: HorizontalAlign,
+    wrap: bool,
+}
+
+/// The section of the part that is currently open, so a bare element can be attributed to it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Section {
+    Other,
+    NumFmts,
+    Fonts,
+    CellXfs,
+}
 
 /// The number format ids the SpreadsheetML specification fixes.
 ///
@@ -42,83 +75,212 @@ pub fn built_in_number_formats() -> HashMap<i32, &'static str> {
     ])
 }
 
-/// Reads the number format of every cell style, keyed by the index a cell refers to with its `s`
+/// Reads the formatting of every cell style, keyed by the index a cell refers to with its `s`
 /// attribute.
 ///
-/// Both halves of the style table matter: `numFmts` holds the codes the workbook defined, and
-/// `cellXfs` is what maps a cell to one of them or to a built-in id.
-pub fn read_number_formats<R: ReadSeek>(archive: &mut Archive<R>) -> HashMap<i32, String> {
-    let mut formats = HashMap::new();
-
+/// Three sections matter and they are read in one walk: `numFmts` holds the codes the workbook
+/// defined, `fonts` holds the text attributes a font id stands for, and `cellXfs` is what maps a cell
+/// to one of each, together with any alignment. Everything else in the part is ignored.
+pub fn read_cell_formats<R: ReadSeek>(archive: &mut Archive<R>) -> HashMap<i32, CellFormat> {
     let Some(text) = archive.read_text("xl/styles.xml") else {
-        return formats;
+        return HashMap::new();
     };
 
     let mut custom: HashMap<i32, String> = HashMap::new();
-    let mut index = 0;
 
-    read_styles(&text, &mut custom, &mut formats, &mut index);
+    // The fonts come from the part in index order: a file writes font 0 itself, so seeding a default
+    // here would shift every id by one.
+    let mut fonts: Vec<CellStyle> = Vec::new();
+    let mut xfs: Vec<XfRecord> = Vec::new();
+
+    read_styles(&text, &mut custom, &mut fonts, &mut xfs);
+
+    resolve(custom, &fonts, xfs)
+}
+
+/// Walks the style part once, collecting custom codes, fonts and cell records in the order they appear.
+fn read_styles(
+    text: &str,
+    custom: &mut HashMap<i32, String>,
+    fonts: &mut Vec<CellStyle>,
+    xfs: &mut Vec<XfRecord>,
+) {
+    let mut reader = Reader::from_str(text);
+    let mut section = Section::Other;
+
+    // A `<font>` and an `<xf>` are the two elements that have children worth reading, so their state is
+    // tracked while they are open.
+    let mut font: Option<CellStyle> = None;
+    let mut xf: Option<XfRecord> = None;
+
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(element)) | Ok(Event::Empty(element)) => {
+                handle_element(element.name(), &element, &mut section, &mut font, &mut xf, custom);
+            }
+
+            Ok(Event::End(element)) => match element.name().local_name().into_inner() {
+                "font" => {
+                    if let Some(style) = font.take() {
+                        fonts.push(style);
+                    }
+                }
+                "xf" => {
+                    if let Some(record) = xf.take() {
+                        xfs.push(record);
+                    }
+                }
+                "fonts" | "cellXfs" | "numFmts" | "cellStyleXfs" => section = Section::Other,
+                _ => {}
+            },
+
+            // A document type is a security hazard, not a document: a part that carries one is refused
+            // outright rather than parsed carefully.
+            Ok(Event::DocType(_)) => return,
+            Ok(Event::Eof) | Err(_) => return,
+            _ => {}
+        }
+    }
+}
+
+/// Handles one opening or standalone element, updating the section and the open font and record.
+fn handle_element(
+    name: QName<'_>,
+    element: &BytesStart<'_>,
+    section: &mut Section,
+    font: &mut Option<CellStyle>,
+    xf: &mut Option<XfRecord>,
+    custom: &mut HashMap<i32, String>,
+) {
+    match name.local_name().into_inner() {
+        "numFmts" => *section = Section::NumFmts,
+        "fonts" => *section = Section::Fonts,
+        "cellXfs" => *section = Section::CellXfs,
+        "cellStyleXfs" => *section = Section::Other,
+
+        "numFmt" if *section == Section::NumFmts => {
+            let id = attribute(element, "numFmtId").and_then(|value| value.parse().ok());
+            let code = attribute(element, "formatCode");
+
+            if let (Some(id), Some(code)) = (id, code) {
+                custom.insert(id, code);
+            }
+        }
+
+        // A font with no children is the default face, which is what `<font/>` means.
+        "font" if *section == Section::Fonts => *font = Some(CellStyle::DEFAULT),
+
+        "b" if font.is_some() => font.as_mut().unwrap().bold = true,
+        "i" if font.is_some() => font.as_mut().unwrap().italic = true,
+        "u" if font.is_some() => font.as_mut().unwrap().underline = true,
+
+        "color" if font.is_some() => {
+            if let Some(color) = attribute(element, "rgb").and_then(|rgb| parse_rgb(&rgb)) {
+                font.as_mut().unwrap().text_color = Some(color);
+            }
+        }
+
+        "xf" if *section == Section::CellXfs => {
+            *xf = Some(XfRecord {
+                num_fmt_id: attribute(element, "numFmtId").and_then(|value| value.parse().ok()),
+                font_id: attribute(element, "fontId")
+                    .and_then(|value| value.parse().ok())
+                    .unwrap_or(0),
+                align: HorizontalAlign::General,
+                wrap: false,
+            });
+        }
+
+        "alignment" if xf.is_some() => {
+            let record = xf.as_mut().unwrap();
+
+            if let Some(horizontal) = attribute(element, "horizontal") {
+                record.align = parse_align(&horizontal);
+            }
+
+            record.wrap = attribute(element, "wrapText").is_some_and(|value| truthy(&value));
+        }
+
+        _ => {}
+    }
+}
+
+/// Turns the raw records into per-index formatting, mapping font ids to fonts and numFmt ids to codes.
+fn resolve(
+    custom: HashMap<i32, String>,
+    fonts: &[CellStyle],
+    xfs: Vec<XfRecord>,
+) -> HashMap<i32, CellFormat> {
+    let built_in = built_in_number_formats();
+    let mut formats = HashMap::new();
+
+    for (index, record) in xfs.into_iter().enumerate() {
+        let number_format = record.num_fmt_id.and_then(|id| {
+            custom
+                .get(&id)
+                .cloned()
+                .or_else(|| built_in.get(&id).map(|code| (*code).to_string()))
+        });
+
+        let mut style = record
+            .font_id
+            .try_into()
+            .ok()
+            .and_then(|font_id: usize| fonts.get(font_id).copied())
+            .unwrap_or_default();
+
+        style.align = record.align;
+        style.wrap = record.wrap;
+
+        // An entry that says nothing is left out, so the worksheet treats it as formatting-free.
+        if number_format.is_some() || !style.is_default() {
+            formats.insert(index as i32, CellFormat { number_format, style });
+        }
+    }
 
     formats
 }
 
-/// Walks the style part once, collecting the workbook's own codes and the cell formats in order.
-fn read_styles(
-    text: &str,
-    custom: &mut HashMap<i32, String>,
-    formats: &mut HashMap<i32, String>,
-    index: &mut i32,
-) {
-    // Only direct children of the root count, which is why the containing element is tracked rather
-    // than every element being treated alike.
-    let mut section = String::new();
-    let built_in = built_in_number_formats();
+/// Parses an ARGB colour such as `FFFF0000` or a bare `FF0000` into red, green and blue.
+fn parse_rgb(value: &str) -> Option<[u8; 3]> {
+    let hex = match value.len() {
+        8 => &value[2..],
+        6 => value,
+        _ => return None,
+    };
 
-    for_each_element(text, |name, attributes| {
-        match name {
-            "numFmts" | "cellXfs" => {
-                section = name.to_string();
-                return;
-            }
-            _ => {}
-        }
+    let red = u8::from_str_radix(&hex[0..2], 16).ok()?;
+    let green = u8::from_str_radix(&hex[2..4], 16).ok()?;
+    let blue = u8::from_str_radix(&hex[4..6], 16).ok()?;
 
-        match (section.as_str(), name) {
-            ("numFmts", "numFmt") => {
-                let id = attribute(attributes, "numFmtId").and_then(|value| value.parse().ok());
-                let code = attribute(attributes, "formatCode");
+    Some([red, green, blue])
+}
 
-                if let (Some(id), Some(code)) = (id, code) {
-                    custom.insert(id, code);
-                }
-            }
+/// The horizontal alignment a value names; anything unrecognised falls back to General.
+fn parse_align(value: &str) -> HorizontalAlign {
+    match value {
+        "left" => HorizontalAlign::Left,
+        "center" => HorizontalAlign::Center,
+        "right" => HorizontalAlign::Right,
+        _ => HorizontalAlign::General,
+    }
+}
 
-            ("cellXfs", "xf") => {
-                let id = attribute(attributes, "numFmtId").and_then(|value| value.parse::<i32>().ok());
-
-                if let Some(id) = id {
-                    // A code the workbook defined wins; otherwise a built-in id, and an id this reader
-                    // does not know is left alone rather than guessed at, so the cell keeps the plain
-                    // rendering instead of being given a wrong one.
-                    if let Some(code) = custom.get(&id) {
-                        formats.insert(*index, code.clone());
-                    } else if let Some(code) = built_in.get(&id) {
-                        formats.insert(*index, (*code).to_string());
-                    }
-                }
-
-                *index += 1;
-            }
-
-            _ => {}
-        }
-    });
+/// True for the two spellings XML accepts for a boolean attribute.
+fn truthy(value: &str) -> bool {
+    matches!(value, "1" | "true" | "TRUE" | "True")
 }
 
 /// Reads one attribute by name.
-fn attribute(attributes: &[(String, String)], name: &str) -> Option<String> {
-    attributes
-        .iter()
-        .find(|(key, _)| key == name)
-        .map(|(_, value)| value.clone())
+fn attribute(element: &BytesStart<'_>, name: &str) -> Option<String> {
+    element
+        .attributes()
+        .flatten()
+        .find(|attribute| attribute.key.as_ref() == name)
+        .and_then(|attribute| {
+            attribute
+                .normalized_value(XmlVersion::Implicit1_0)
+                .ok()
+                .map(|value| value.into_owned())
+        })
 }

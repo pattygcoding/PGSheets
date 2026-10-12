@@ -9,7 +9,7 @@ mod worksheet;
 
 use std::collections::HashMap;
 
-use pgsheets_core::ExportSource;
+use pgsheets_core::{CellStyle, ExportSource, HorizontalAlign};
 
 use super::{ExportError, ExportOptions, ExportResult, SpreadsheetExporter};
 use crate::ooxml::{
@@ -39,52 +39,177 @@ const STYLES_RELATIONSHIP: &str =
 /// Everything below it is fixed by the specification, so custom codes are numbered from here up.
 const FIRST_CUSTOM_FORMAT_ID: i32 = 164;
 
-/// The distinct number formats the cells being written use, in the order they are first seen.
+/// The distinct number formats, fonts and alignments the cells being written use, in the order they are
+/// first seen.
 ///
-/// Style index 0 is always General, which is what a cell with no format refers to.
+/// Style index 0 is always the plain entry — General, the default font, no alignment — which is what a
+/// cell with no formatting refers to. Everything after it is a distinct combination, so two cells that
+/// differ only in bold share a font and differ only in their `xf`.
 #[derive(Default)]
-pub(crate) struct NumberFormatTable {
-    indices: HashMap<String, i32>,
+pub(crate) struct StyleTable {
+    /// The distinct number format codes, numbered from 0; the `numFmtId` written is offset by the first
+    /// custom id.
     codes: Vec<String>,
+    code_indices: HashMap<String, i32>,
+
+    /// The distinct fonts, numbered from 0; index 0 is the default font.
+    fonts: Vec<CellStyle>,
+    font_indices: HashMap<CellStyle, i32>,
+
+    /// The distinct style records, numbered from 0; index 0 is the plain entry.
+    xfs: Vec<StyleKey>,
+    xf_indices: HashMap<StyleKey, i32>,
 }
 
-impl NumberFormatTable {
-    /// The style index for a format code; 0, the default entry, when there is none.
-    pub(crate) fn index_of(&mut self, code: Option<&str>) -> i32 {
-        let Some(code) = code else {
-            return 0;
+/// One style record: a cell's number format, font and alignment together, which is exactly what an
+/// `<xf>` holds.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub(crate) struct StyleKey {
+    /// Index into [`StyleTable::fonts`].
+    font: i32,
+
+    /// A custom number format id, or 0 for General.
+    num_fmt_id: i32,
+
+    /// Horizontal alignment.
+    align: HorizontalAlign,
+
+    /// Whether the text wraps.
+    wrap: bool,
+}
+
+impl StyleTable {
+    /// A table seeded with the plain style at index 0, which every cell with no formatting refers to.
+    pub(crate) fn new() -> Self {
+        let mut table = Self::default();
+
+        // Font 0 is the default font and xf 0 is the plain entry, so a cell written without an `s`
+        // attribute means "no formatting".
+        table.fonts.push(CellStyle::DEFAULT);
+        table.font_indices.insert(CellStyle::DEFAULT, 0);
+
+        let plain = StyleKey {
+            font: 0,
+            num_fmt_id: 0,
+            align: HorizontalAlign::General,
+            wrap: false,
         };
 
-        if let Some(index) = self.indices.get(code) {
-            return *index;
-        }
+        table.xfs.push(plain.clone());
+        table.xf_indices.insert(plain, 0);
 
-        let index = self.codes.len() as i32 + 1;
-        self.codes.push(code.to_string());
-        self.indices.insert(code.to_string(), index);
-
-        index
+        table
     }
 
-    /// The distinct codes, in index order.
+    /// Notes a cell's number format and style, returning nothing; the worksheet looks the index up
+    /// afterwards with [`StyleTable::index_of`].
+    pub(crate) fn insert(&mut self, number_format: Option<&str>, style: Option<CellStyle>) {
+        let style = style.unwrap_or_default();
+
+        let num_fmt_id = match number_format {
+            Some(code) => self.intern_code(code),
+            None => 0,
+        };
+
+        let font = self.intern_font(style);
+
+        let key = StyleKey {
+            font,
+            num_fmt_id,
+            align: style.align,
+            wrap: style.wrap,
+        };
+
+        if let std::collections::hash_map::Entry::Vacant(entry) = self.xf_indices.entry(key.clone()) {
+            entry.insert(self.xfs.len() as i32);
+            self.xfs.push(key);
+        }
+    }
+
+    /// The style index for a cell's number format and style; 0, the plain entry, when it has neither.
+    pub(crate) fn index_of(&self, number_format: Option<&str>, style: Option<CellStyle>) -> i32 {
+        let style = style.unwrap_or_default();
+
+        let num_fmt_id = match number_format {
+            Some(code) => match self.code_indices.get(code) {
+                Some(index) => self.number_format_id_at(*index),
+                None => 0,
+            },
+            None => 0,
+        };
+
+        let font = self.font_indices.get(&font_key(style)).copied().unwrap_or(0);
+
+        let key = StyleKey {
+            font,
+            num_fmt_id,
+            align: style.align,
+            wrap: style.wrap,
+        };
+
+        self.xf_indices.get(&key).copied().unwrap_or(0)
+    }
+
+    /// The distinct number format codes, in index order.
     pub(crate) fn codes(&self) -> &[String] {
         &self.codes
     }
 
-    /// The style index a code already has; 0 — the default entry — when it has none.
-    ///
-    /// The formats were collected before either part was written, so the worksheet only ever looks an
-    /// index up.
-    pub(crate) fn index_of_known(&self, code: Option<&str>) -> i32 {
-        match code {
-            Some(code) => self.indices.get(code).copied().unwrap_or(0),
-            None => 0,
-        }
+    /// The distinct fonts, in index order.
+    pub(crate) fn fonts(&self) -> &[CellStyle] {
+        &self.fonts
     }
 
-    /// The `numFmtId` written for the format at a style index.
-    pub(crate) fn number_format_id_at(&self, style_index: i32) -> i32 {
-        FIRST_CUSTOM_FORMAT_ID + style_index - 1
+    /// The distinct style records, in index order.
+    pub(crate) fn styles(&self) -> &[StyleKey] {
+        &self.xfs
+    }
+
+    /// The `numFmtId` a cell with this style record refers to.
+    pub(crate) fn number_format_id_of(&self, key: &StyleKey) -> i32 {
+        key.num_fmt_id
+    }
+
+    /// The `numFmtId` written for the code at an index, counting from 0.
+    pub(crate) fn number_format_id_at(&self, code_index: i32) -> i32 {
+        FIRST_CUSTOM_FORMAT_ID + code_index
+    }
+
+    fn intern_code(&mut self, code: &str) -> i32 {
+        if let Some(index) = self.code_indices.get(code) {
+            return self.number_format_id_at(*index);
+        }
+
+        let index = self.codes.len() as i32;
+        self.codes.push(code.to_string());
+        self.code_indices.insert(code.to_string(), index);
+
+        self.number_format_id_at(index)
+    }
+
+    fn intern_font(&mut self, style: CellStyle) -> i32 {
+        // Only the font-carrying flags matter here; alignment and the number format live on the `xf`.
+        let font_key = font_key(style);
+
+        if let Some(index) = self.font_indices.get(&font_key) {
+            return *index;
+        }
+
+        let index = self.fonts.len() as i32;
+        self.fonts.push(font_key);
+        self.font_indices.insert(font_key, index);
+
+        index
+    }
+}
+
+/// The part of a style a font is made of: the text attributes, without the alignment or the number
+/// format, which belong on the `xf` rather than on the `<font>`.
+fn font_key(style: CellStyle) -> CellStyle {
+    CellStyle {
+        align: HorizontalAlign::General,
+        wrap: false,
+        ..style
     }
 }
 
@@ -114,10 +239,10 @@ impl SpreadsheetExporter for XlsxWriter {
         let mut result = ExportResult::new();
         let sheet_name = sanitize_sheet_name(Some(&options.sheet_name));
 
-        // The style table has to know every format before either part is written, so the formats are
-        // collected in one pass over the cell keys first.
-        let number_formats = collect_number_formats(source, options);
-        let worksheet = write_worksheet(source, options, &number_formats, &mut result);
+        // The style table has to know every format, font and alignment before either part is written,
+        // so they are collected in one pass over the cell keys first.
+        let styles = collect_styles(source, options);
+        let worksheet = write_worksheet(source, options, &styles, &mut result);
 
         let mut package = PackageWriter::create(writer);
 
@@ -125,7 +250,7 @@ impl SpreadsheetExporter for XlsxWriter {
         package.write_part(ROOT_RELATIONSHIPS_PART, &write_root_relationships())?;
         package.write_part(WORKBOOK_PART, &write_workbook(&sheet_name))?;
         package.write_part(WORKBOOK_RELATIONSHIPS_PART, &write_workbook_relationships())?;
-        package.write_part(STYLES_PART, &write_styles(&number_formats))?;
+        package.write_part(STYLES_PART, &write_styles(&styles))?;
         package.write_part(WORKSHEET_PART, &worksheet)?;
         package.finish()?;
 
@@ -215,10 +340,10 @@ fn write_workbook_relationships() -> String {
     xml.into_string()
 }
 
-/// Collects the number formats the cells being written use, so the style table can name them and the
-/// worksheet can refer to them by index.
-fn collect_number_formats(source: &dyn ExportSource, options: &ExportOptions) -> NumberFormatTable {
-    let mut table = NumberFormatTable::default();
+/// Collects the number formats, fonts and alignments the cells being written use, so the style table
+/// can name them and the worksheet can refer to them by index.
+fn collect_styles(source: &dyn ExportSource, options: &ExportOptions) -> StyleTable {
+    let mut table = StyleTable::new();
 
     for address in source.populated_cells() {
         if options
@@ -228,36 +353,34 @@ fn collect_number_formats(source: &dyn ExportSource, options: &ExportOptions) ->
             continue;
         }
 
-        table.index_of(source.number_format(address.row, address.column));
+        table.insert(
+            source.number_format(address.row, address.column),
+            source.cell_style(address.row, address.column),
+        );
     }
 
     table
 }
 
-/// `xl/styles.xml`: enough of a style table for the number formats to mean something.
+/// `xl/styles.xml`: the number formats, fonts and alignments every cell in the sheet refers to.
 ///
 /// Excel is strict about this part — every `count` must match the number of children, there must be at
 /// least two fills, and `cellStyleXfs` must hold a plain entry — and getting any of that wrong makes
 /// Excel offer to repair the file.
-fn write_styles(number_formats: &NumberFormatTable) -> String {
+fn write_styles(styles: &StyleTable) -> String {
     let mut xml = XmlWriter::new();
     xml.declaration();
     xml.start("styleSheet");
 
     // The specification fixes the order of these children, and numFmts has to come first: a file with
     // them out of order is one Excel offers to repair.
-    if !number_formats.codes().is_empty() {
+    if !styles.codes().is_empty() {
         xml.start("numFmts");
-        xml.attribute("count", &number_formats.codes().len().to_string());
+        xml.attribute("count", &styles.codes().len().to_string());
 
-        for (index, code) in number_formats.codes().iter().enumerate() {
-            let style_index = index as i32 + 1;
-
+        for (index, code) in styles.codes().iter().enumerate() {
             xml.start("numFmt");
-            xml.attribute(
-                "numFmtId",
-                &number_formats.number_format_id_at(style_index).to_string(),
-            );
+            xml.attribute("numFmtId", &styles.number_format_id_at(index as i32).to_string());
             xml.attribute("formatCode", code);
             xml.end();
         }
@@ -266,11 +389,12 @@ fn write_styles(number_formats: &NumberFormatTable) -> String {
     }
 
     xml.start("fonts");
-    xml.attribute("count", "1");
-    xml.start("font");
-    write_valued(&mut xml, "sz", "11");
-    write_valued(&mut xml, "name", "Calibri");
-    xml.end();
+    xml.attribute("count", &styles.fonts().len().to_string());
+
+    for font in styles.fonts() {
+        write_font(&mut xml, *font);
+    }
+
     xml.end();
 
     xml.start("fills");
@@ -293,18 +417,22 @@ fn write_styles(number_formats: &NumberFormatTable) -> String {
 
     xml.start("cellStyleXfs");
     xml.attribute("count", "1");
-    write_format(&mut xml, "0", false, false);
+    write_format(&mut xml, "0", 0, false, false, HorizontalAlign::General, false);
     xml.end();
 
     xml.start("cellXfs");
-    xml.attribute("count", &(number_formats.codes().len() + 1).to_string());
+    xml.attribute("count", &styles.styles().len().to_string());
 
-    // Entry 0 is General, which is what a cell with no number format refers to.
-    write_format(&mut xml, "0", true, false);
-
-    for style_index in 1..=number_formats.codes().len() as i32 {
-        let id = number_formats.number_format_id_at(style_index).to_string();
-        write_format(&mut xml, &id, true, true);
+    for key in styles.styles() {
+        write_format(
+            &mut xml,
+            &styles.number_format_id_of(key).to_string(),
+            key.font,
+            true,
+            key.num_fmt_id != 0,
+            key.align,
+            key.wrap,
+        );
     }
 
     xml.end();
@@ -358,15 +486,53 @@ fn write_pattern_fill(xml: &mut XmlWriter, pattern_type: &str) {
     xml.end();
 }
 
+/// Writes one `<font>`: the text attributes a style carries, on top of the default face.
+fn write_font(xml: &mut XmlWriter, font: CellStyle) {
+    xml.start("font");
+
+    if font.bold {
+        xml.start("b");
+        xml.end();
+    }
+
+    if font.italic {
+        xml.start("i");
+        xml.end();
+    }
+
+    if font.underline {
+        xml.start("u");
+        xml.end();
+    }
+
+    if let Some([red, green, blue]) = font.text_color {
+        xml.start("color");
+        xml.attribute("rgb", &format!("FF{red:02X}{green:02X}{blue:02X}"));
+        xml.end();
+    }
+
+    write_valued(xml, "sz", "11");
+    write_valued(xml, "name", "Calibri");
+    xml.end();
+}
+
+/// Writes one `<xf>`, the record a cell's `s` attribute points at.
+///
+/// The `xfId` is only present on the `cellXfs` entries: `cellStyleXfs` holds the named cell styles and
+/// must not name one.
+#[allow(clippy::too_many_arguments)]
 fn write_format(
     xml: &mut XmlWriter,
     num_fmt_id: &str,
+    font_id: i32,
     include_style_reference: bool,
     apply_number_format: bool,
+    align: HorizontalAlign,
+    wrap: bool,
 ) {
     xml.start("xf");
     xml.attribute("numFmtId", num_fmt_id);
-    xml.attribute("fontId", "0");
+    xml.attribute("fontId", &font_id.to_string());
     xml.attribute("fillId", "0");
     xml.attribute("borderId", "0");
 
@@ -374,9 +540,41 @@ fn write_format(
         xml.attribute("xfId", "0");
     }
 
+    if font_id != 0 {
+        xml.attribute("applyFont", "1");
+    }
+
     if apply_number_format {
         xml.attribute("applyNumberFormat", "1");
     }
 
+    let horizontal = horizontal_name(align);
+
+    if horizontal.is_some() || wrap {
+        xml.attribute("applyAlignment", "1");
+        xml.start("alignment");
+
+        if let Some(horizontal) = horizontal {
+            xml.attribute("horizontal", horizontal);
+        }
+
+        if wrap {
+            xml.attribute("wrapText", "1");
+        }
+
+        xml.end();
+    }
+
     xml.end();
+}
+
+/// The value Excel gives a horizontal alignment, or `None` for General — which is left off rather than
+/// spelled out, so a cell with no alignment renders as one that never mentioned it.
+fn horizontal_name(align: HorizontalAlign) -> Option<&'static str> {
+    match align {
+        HorizontalAlign::General => None,
+        HorizontalAlign::Left => Some("left"),
+        HorizontalAlign::Center => Some("center"),
+        HorizontalAlign::Right => Some("right"),
+    }
 }

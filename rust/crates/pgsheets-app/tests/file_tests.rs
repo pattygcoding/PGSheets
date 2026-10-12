@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use pgsheets_app::files;
+use pgsheets_core::{CellStyle, HorizontalAlign};
 use pgsheets_sheet::Workbook;
 
 /// A unique path in the temporary directory, inside a directory of its own.
@@ -214,6 +215,39 @@ fn an_empty_workbook_writes_an_empty_file() {
 
     assert!(imported.cells.is_empty());
     assert_eq!(imported.result.rows, 0);
+
+    cleanup(&path);
+}
+
+#[test]
+fn a_cell_style_comes_back_from_a_file() {
+    let path = temporary("xlsx");
+
+    let mut workbook = files::new_workbook();
+    workbook.set_raw_input(0, 0, "bold");
+
+    workbook.set_cell_style(
+        0,
+        0,
+        CellStyle::DEFAULT
+            .with_bold(true)
+            .with_align(HorizontalAlign::Right),
+    );
+
+    save(&path, &workbook).expect("the file should be written");
+
+    let imported = files::open(&path).expect("the file should be read");
+    let mut restored = files::new_workbook();
+
+    imported.write_into(&mut restored);
+
+    let style = restored
+        .cell_style(0, 0)
+        .expect("the style should come back with its value");
+
+    assert!(style.bold);
+    assert_eq!(style.align, HorizontalAlign::Right);
+    assert_eq!(restored.raw_input(0, 0), "bold");
 
     cleanup(&path);
 }

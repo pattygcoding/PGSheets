@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use pgsheets_core::cell_data::CellData;
 use pgsheets_core::store::{CellStore, ExportSource, ImportSink};
 use pgsheets_core::undo::{CellChange, UndoStack, UndoSuspension};
-use pgsheets_core::{CellAddress, CellValue, FormulaEngine, MAX_COLUMNS, MAX_ROWS};
+use pgsheets_core::{CellAddress, CellStyle, CellValue, FormulaEngine, MAX_COLUMNS, MAX_ROWS};
 use pgsheets_formulas::rewriter;
 
 /// A listener told that the sheet changed.
@@ -16,10 +16,12 @@ use pgsheets_formulas::rewriter;
 /// window dirty; a test uses it to count notifications.
 type ChangeListener = Box<dyn FnMut()>;
 
-/// One cell as a structural edit sees it: its raw input and the format that goes with it.
+/// One cell as a structural edit sees it: its raw input, the number format and the style that go with
+/// it.
 struct CellContent {
     raw: String,
     format: Option<String>,
+    style: CellStyle,
 }
 
 /// The sparse workbook.
@@ -101,6 +103,16 @@ impl Workbook {
         self.cell(row, column).and_then(CellData::number_format)
     }
 
+    /// The styling of a cell, or `None` when it has none.
+    ///
+    /// `None` rather than a default style, so a caller can tell "nothing has been formatted here" from
+    /// "this cell was deliberately given the default look".
+    pub fn cell_style(&self, row: i32, column: i32) -> Option<CellStyle> {
+        self.cell(row, column)
+            .map(CellData::style)
+            .filter(|style| !style.is_default())
+    }
+
     /// Every populated cell, in no particular order.
     pub fn populated_cells(&self) -> Vec<CellAddress> {
         self.cells.keys().copied().collect()
@@ -130,7 +142,13 @@ impl Workbook {
         self.begin_bulk_update();
 
         for change in changes {
-            self.apply_raw_input(change.row, change.column, &change.before, change.before_format);
+            self.apply_cell(
+                change.row,
+                change.column,
+                &change.before,
+                change.before_format,
+                change.before_style,
+            );
         }
 
         self.end_bulk_update();
@@ -146,7 +164,13 @@ impl Workbook {
         self.begin_bulk_update();
 
         for change in changes {
-            self.apply_raw_input(change.row, change.column, &change.after, change.after_format);
+            self.apply_cell(
+                change.row,
+                change.column,
+                &change.after,
+                change.after_format,
+                change.after_style,
+            );
         }
 
         self.end_bulk_update();
@@ -161,10 +185,10 @@ impl Workbook {
         self.undo.suspend()
     }
 
-    /// Stores raw input for a cell, keeping the number format it already has, recalculates, and
+    /// Stores raw input for a cell, keeping the number format and style it already has, recalculates, and
     /// records an undo step.
     ///
-    /// An empty string removes the cell, unless a format is attached to it.
+    /// An empty string removes the cell, unless a format or a style is attached to it.
     pub fn set_raw_input(&mut self, row: i32, column: i32, raw_input: &str) {
         // The previous state has to be read *before* the mutation: applying a value writes through the
         // very record a caller holds, so reading it afterwards would record "no change".
@@ -175,23 +199,20 @@ impl Workbook {
         }
 
         let format = self.number_format(row, column).map(str::to_string);
+        let style = self.cell(row, column).map(CellData::style).unwrap_or_default();
 
-        // Typing a value does not change the way that value is displayed.
-        self.apply_raw_input(row, column, raw_input, format.clone());
-        self.undo.record(CellChange::new(
-            row,
-            column,
-            previous,
-            raw_input,
-            format.clone(),
-            format,
-        ));
+        // Typing a value does not change the way that value is displayed, nor how it looks.
+        self.apply_cell(row, column, raw_input, format.clone(), style);
+        self.undo.record(
+            CellChange::new(row, column, previous, raw_input, format.clone(), format)
+                .with_style(style, style),
+        );
     }
 
     /// Sets the number format of a cell and records one undo step.
     ///
-    /// A blank format means General; clearing the format of a cell that holds no value removes the
-    /// cell entirely.
+    /// A blank format means General; clearing the format of a cell that holds no value and no style
+    /// removes the cell entirely.
     pub fn set_number_format(&mut self, row: i32, column: i32, number_format: Option<&str>) {
         let format = number_format
             .filter(|code| !code.trim().is_empty())
@@ -203,7 +224,7 @@ impl Workbook {
             }
 
             // A format on its own is still worth keeping: it is what a value typed later shows as.
-            self.apply_raw_input(row, column, "", format.clone());
+            self.apply_cell(row, column, "", format.clone(), CellStyle::DEFAULT);
             self.undo
                 .record(CellChange::new(row, column, "", "", None, format));
             return;
@@ -215,30 +236,85 @@ impl Workbook {
 
         // Read the previous state before mutating, for the same reason as above.
         let raw = cell.raw_input().to_string();
+        let style = cell.style();
         let previous_format = cell.number_format().map(str::to_string);
 
-        self.apply_raw_input(row, column, &raw, format.clone());
-        self.undo
-            .record(CellChange::new(row, column, &raw, &raw, previous_format, format));
+        self.apply_cell(row, column, &raw, format.clone(), style);
+        self.undo.record(
+            CellChange::new(row, column, &raw, &raw, previous_format, format).with_style(style, style),
+        );
     }
 
-    /// Applies a raw value and its number format without touching the undo history.
+    /// Sets the styling of a cell and records one undo step.
+    ///
+    /// A style with no value and no number format removes the cell; a style applied to an empty cell
+    /// keeps it, because formatting is remembered for whatever is typed next.
+    pub fn set_cell_style(&mut self, row: i32, column: i32, style: CellStyle) {
+        let style = if style.is_default() {
+            CellStyle::DEFAULT
+        } else {
+            style
+        };
+
+        let Some(cell) = self.cell(row, column) else {
+            if style.is_default() {
+                return;
+            }
+
+            // A style on its own is still worth keeping: it is what a value typed later looks like.
+            self.apply_cell(row, column, "", None, style);
+            self.undo.record(
+                CellChange::new(row, column, "", "", None, None).with_style(CellStyle::DEFAULT, style),
+            );
+            return;
+        };
+
+        if cell.style() == style {
+            return;
+        }
+
+        let raw = cell.raw_input().to_string();
+        let format = cell.number_format().map(str::to_string);
+        let previous_style = cell.style();
+
+        self.apply_cell(row, column, &raw, format.clone(), style);
+        self.undo.record(
+            CellChange::new(row, column, &raw, &raw, format.clone(), format)
+                .with_style(previous_style, style),
+        );
+    }
+
+    /// Applies a raw value, its number format and its style without touching the undo history.
     ///
     /// This is the single mutation point, shared by the setters above and by undo/redo replay.
-    fn apply_raw_input(&mut self, row: i32, column: i32, raw_input: &str, number_format: Option<String>) {
+    fn apply_cell(
+        &mut self,
+        row: i32,
+        column: i32,
+        raw_input: &str,
+        number_format: Option<String>,
+        style: CellStyle,
+    ) {
         let address = CellAddress::new(row, column);
         let format = number_format.filter(|code| !code.is_empty());
+        let style = if style.is_default() {
+            CellStyle::DEFAULT
+        } else {
+            style
+        };
 
-        if raw_input.is_empty() && format.is_none() {
+        if raw_input.is_empty() && format.is_none() && style.is_default() {
             // Nothing to show and nothing to remember: the cell goes, keeping the sheet sparse.
             self.cells.remove(&address);
             self.engine.on_cell_removed(address);
         } else if let Some(cell) = self.cells.get_mut(&address) {
             cell.set_raw_input(raw_input);
             cell.set_number_format(format);
+            cell.set_style(style);
         } else {
             let mut cell = CellData::new(raw_input);
             cell.set_number_format(format);
+            cell.set_style(style);
             self.cells.insert(address, cell);
         }
 
@@ -344,6 +420,7 @@ impl Workbook {
                 CellContent {
                     raw,
                     format: cell.number_format().map(str::to_string),
+                    style: cell.style(),
                 },
             );
         }
@@ -391,6 +468,7 @@ impl Workbook {
                 CellContent {
                     raw,
                     format: cell.number_format().map(str::to_string),
+                    style: cell.style(),
                 },
             );
         }
@@ -401,9 +479,9 @@ impl Workbook {
 
     /// Replaces the whole sheet with a transformed copy as a single undo step.
     ///
-    /// Cells that no longer exist are cleared and the rest written — value and format together; every
-    /// key is visited once, so the undo stack records one coherent before/after per cell and an undo
-    /// puts the sheet back exactly as it was.
+    /// Cells that no longer exist are cleared and the rest written — value, format and style together;
+    /// every key is visited once, so the undo stack records one coherent before/after per cell and an
+    /// undo puts the sheet back exactly as it was.
     fn replace_contents(&mut self, replacement: HashMap<CellAddress, CellContent>) {
         self.begin_bulk_update();
 
@@ -415,17 +493,34 @@ impl Workbook {
                 continue;
             }
 
-            // Clearing the format as well as the value is what removes a formatted empty cell.
-            self.set_number_format(address.row, address.column, None);
-            self.set_raw_input(address.row, address.column, "");
+            // Clearing the format and the style as well as the value is what removes a formatted empty
+            // cell.
+            self.clear_cell(address.row, address.column);
         }
 
         for (address, content) in replacement {
             self.set_raw_input(address.row, address.column, &content.raw);
             self.set_number_format(address.row, address.column, content.format.as_deref());
+            self.set_cell_style(address.row, address.column, content.style);
         }
 
         self.end_bulk_update();
+    }
+
+    /// Removes a cell entirely — value, number format and style — recording one undo step.
+    fn clear_cell(&mut self, row: i32, column: i32) {
+        let Some(cell) = self.cell(row, column) else {
+            return;
+        };
+
+        let raw = cell.raw_input().to_string();
+        let format = cell.number_format().map(str::to_string);
+        let style = cell.style();
+
+        self.apply_cell(row, column, "", None, CellStyle::DEFAULT);
+        self.undo.record(
+            CellChange::new(row, column, raw, "", format, None).with_style(style, CellStyle::DEFAULT),
+        );
     }
 
     /// Removes every cell and the undo history that referred to them.
@@ -522,6 +617,10 @@ impl ImportSink for Workbook {
     fn set_number_format(&mut self, row: i32, column: i32, number_format: Option<&str>) {
         Workbook::set_number_format(self, row, column, number_format);
     }
+
+    fn set_cell_style(&mut self, row: i32, column: i32, style: Option<&CellStyle>) {
+        Workbook::set_cell_style(self, row, column, style.copied().unwrap_or_default());
+    }
 }
 
 impl ExportSource for Workbook {
@@ -539,6 +638,10 @@ impl ExportSource for Workbook {
 
     fn number_format(&self, row: i32, column: i32) -> Option<&str> {
         Workbook::number_format(self, row, column)
+    }
+
+    fn cell_style(&self, row: i32, column: i32) -> Option<CellStyle> {
+        Workbook::cell_style(self, row, column)
     }
 }
 

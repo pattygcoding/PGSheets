@@ -4,10 +4,12 @@ use std::cell::Cell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use crate::style::CellStyle;
+
 /// Most steps kept. Older ones fall off the end: undo history is a convenience, not a document.
 const MAX_STEPS: usize = 200;
 
-/// One cell's change within a step: its input and its number format, before and after.
+/// One cell's change within a step: its input, its number format and its style, before and after.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CellChange {
     /// Zero-based row.
@@ -27,10 +29,18 @@ pub struct CellChange {
 
     /// The number format after the change.
     pub after_format: Option<String>,
+
+    /// The style before the change.
+    pub before_style: CellStyle,
+
+    /// The style after the change.
+    pub after_style: CellStyle,
 }
 
 impl CellChange {
-    /// Creates a change record.
+    /// Creates a change record for a value and its number format, with no change of style.
+    ///
+    /// Styles go on afterwards with [`CellChange::with_style`], because most edits do not touch them.
     pub fn new(
         row: i32,
         column: i32,
@@ -46,7 +56,16 @@ impl CellChange {
             after: after.into(),
             before_format,
             after_format,
+            before_style: CellStyle::DEFAULT,
+            after_style: CellStyle::DEFAULT,
         }
+    }
+
+    /// The same change, with the style it also carried, before and after.
+    pub fn with_style(mut self, before_style: CellStyle, after_style: CellStyle) -> Self {
+        self.before_style = before_style;
+        self.after_style = after_style;
+        self
     }
 }
 
@@ -143,14 +162,16 @@ impl UndoStack {
         }
     }
 
-    /// Notes one cell change: its raw input and its number format.
+    /// Notes one cell change: its raw input, its number format and its style.
     ///
-    /// No-ops when neither actually changed, so applying the same format twice is not an undo step.
+    /// No-ops when none of the three actually changed, so applying the same format twice is not an
+    /// undo step.
     pub fn record(&mut self, change: CellChange) {
         let raw_unchanged = change.before == change.after;
         let format_unchanged = change.before_format == change.after_format;
+        let style_unchanged = change.before_style == change.after_style;
 
-        if self.is_suspended() || (raw_unchanged && format_unchanged) {
+        if self.is_suspended() || (raw_unchanged && format_unchanged && style_unchanged) {
             return;
         }
 
@@ -165,6 +186,7 @@ impl UndoStack {
             // The same cell twice in one step: keep the first "before" and the last "after".
             group[index].after = change.after;
             group[index].after_format = change.after_format;
+            group[index].after_style = change.after_style;
             return;
         }
 

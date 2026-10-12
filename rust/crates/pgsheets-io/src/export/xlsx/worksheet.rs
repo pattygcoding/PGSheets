@@ -3,7 +3,7 @@
 use pgsheets_core::numeric::write_round_trip;
 use pgsheets_core::{CellAddress, CellValue, ExportSource, MAX_COLUMNS, MAX_ROWS, parse_literal};
 
-use super::NumberFormatTable;
+use super::StyleTable;
 use crate::export::{ExportOptions, ExportResult};
 use crate::ooxml::sanitize_text;
 use crate::xml::XmlWriter;
@@ -15,7 +15,7 @@ use crate::xml::XmlWriter;
 pub(super) fn write_worksheet(
     source: &dyn ExportSource,
     options: &ExportOptions,
-    number_formats: &NumberFormatTable,
+    styles: &StyleTable,
     result: &mut ExportResult,
 ) -> String {
     let mut cells: Vec<CellAddress> = source
@@ -55,7 +55,7 @@ pub(super) fn write_worksheet(
                 row,
                 column,
                 source,
-                number_formats.index_of_known(source.number_format(row, column)),
+                styles.index_of(source.number_format(row, column), source.cell_style(row, column)),
             );
 
             written += 1;

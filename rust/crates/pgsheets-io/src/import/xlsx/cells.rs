@@ -2,8 +2,10 @@
 
 use pgsheets_core::CellAddress;
 
-/// Converts one worksheet cell into the raw input the model will store, together with the number
-/// format that gives that text its meaning.
+use super::styles::CellFormat;
+
+/// Converts one worksheet cell into the raw input the model will store, together with the formatting
+/// that gives that text its meaning and its look.
 ///
 /// A date stays the serial the file holds: the format is what turns it back into a date, exactly as it
 /// does in a spreadsheet, which is also what makes it behave like the number it is.
@@ -15,14 +17,14 @@ pub(super) fn resolve_cell(
     inline_text: Option<&str>,
     style_attribute: Option<&str>,
     shared_strings: &[String],
-    number_formats: &std::collections::HashMap<i32, String>,
+    number_formats: &std::collections::HashMap<i32, CellFormat>,
     import_formulas: bool,
-) -> (String, Option<String>) {
-    let format = read_format(style_attribute, number_formats);
+) -> (String, CellFormat) {
+    let formatting = read_format(style_attribute, number_formats);
     let formula = formula.filter(|text| !text.is_empty());
 
     if import_formulas && let Some(formula) = formula {
-        return (format!("={formula}"), format);
+        return (format!("={formula}"), formatting);
     }
 
     let raw = match cell_type {
@@ -45,16 +47,19 @@ pub(super) fn resolve_cell(
         _ => value.unwrap_or_default().to_string(),
     };
 
-    (raw, format)
+    (raw, formatting)
 }
 
-/// The number format a cell refers to with its `s` attribute, or `None` when it has none.
+/// The formatting a cell refers to with its `s` attribute, or the plain default when it has none.
 fn read_format(
     style_attribute: Option<&str>,
-    number_formats: &std::collections::HashMap<i32, String>,
-) -> Option<String> {
-    let index: i32 = style_attribute?.parse().ok()?;
-    number_formats.get(&index).cloned()
+    number_formats: &std::collections::HashMap<i32, CellFormat>,
+) -> CellFormat {
+    let Some(index) = style_attribute.and_then(|value| value.parse::<i32>().ok()) else {
+        return CellFormat::default();
+    };
+
+    number_formats.get(&index).cloned().unwrap_or_default()
 }
 
 /// The function names a formula calls, so unsupported ones can be reported up front rather than

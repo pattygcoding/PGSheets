@@ -23,9 +23,35 @@ typed on the way in, and saving writes it back verbatim — which is why a formu
 does the same. Only cells that exist are touched, so clearing a whole column of a mostly empty sheet
 is fast.
 
-Clearing a cell removes it — except for its number format. A cell you have formatted keeps that
-format after the value is gone, ready for whatever you type next. That is deliberate: it is what
-makes "format the column, then fill it in" work.
+Clearing a cell removes it — except for its number format and its style. A cell you have formatted
+keeps that format and style after the value is gone, ready for whatever you type next. That is
+deliberate: it is what makes "format the column, then fill it in" work.
+
+## Formatting a cell
+
+The toolbar above the formula bar sets how the selection **looks**, without touching what it holds.
+
+| Button | Effect |
+|---|---|
+| **B** / *I* / U | Bold, italic, underline |
+| Left / Center / Right | Horizontal alignment |
+| Wrap | Wraps the text to the column's width |
+| Colour | The text colour, and **Default** to clear it |
+
+Two things follow the way a spreadsheet behaves:
+
+- The buttons show the **active cell's** state, and a click sets the whole selection to match what the
+  active cell is *not* — so from a mixed selection one click makes everything bold, or everything plain.
+- With **no explicit alignment**, the active cell's own content decides: numbers go right, text goes
+  left, booleans are centred. That is Excel's "General" alignment, and clicking Left/Center/Right
+  overrides it.
+
+A style travels with its cell: it survives an undo, follows the cell through an inserted or deleted row
+or column, and is written into a `.xlsx` file and read back. What it does **not** do is fill a wide
+selection with empty cells — only cells that already exist are styled, exactly as with a number format.
+
+Wrap has one caveat: rows are a fixed height, so a wrapped cell shows the lines that fit and clips the
+rest rather than pushing the row taller.
 
 ## Undo and redo
 
@@ -35,7 +61,7 @@ think of as one action:
 - typing a value into a cell,
 - pasting a block,
 - clearing a range, however many cells it covered,
-- applying a number format to a selection,
+- applying a number format or a style to a selection,
 - inserting or deleting rows or columns.
 
 The history holds the last 200 steps, lives in memory only, and is **not written to the file** —

@@ -15,6 +15,7 @@ use crate::import::csv::decode;
 
 use super::cells::{extract_function_names, resolve_cell};
 use super::parts::{local_name, resolve_reference, xml_text};
+use super::styles::CellFormat;
 
 /// One cell as it is being read, before it is resolved.
 struct PendingCell {
@@ -43,7 +44,7 @@ pub(super) fn parse_worksheet(
     part: &[u8],
     sink: &mut dyn ImportSink,
     shared_strings: &[String],
-    number_formats: &HashMap<i32, String>,
+    number_formats: &HashMap<i32, CellFormat>,
     result: &mut ImportResult,
     import_formulas: bool,
     functions: &FunctionLibrary,
@@ -197,7 +198,7 @@ fn begin_cell(element: &BytesStart<'_>, current_row: i32, next_column: &mut i32)
 fn collect(
     cell: PendingCell,
     shared_strings: &[String],
-    number_formats: &HashMap<i32, String>,
+    number_formats: &HashMap<i32, CellFormat>,
     import_formulas: bool,
     functions: &FunctionLibrary,
     sink: &mut dyn ImportSink,
@@ -206,7 +207,7 @@ fn collect(
     max_column: &mut i32,
     unknown_functions: &mut Vec<String>,
 ) {
-    let (raw, format) = resolve_cell(
+    let (raw, formatting) = resolve_cell(
         cell.cell_type.as_deref(),
         non_empty(&cell.value),
         non_empty(&cell.formula),
@@ -231,9 +232,14 @@ fn collect(
 
     sink.set_raw_input(cell.row, cell.column, &raw);
 
-    if let Some(format) = format.filter(|format| !format.is_empty()) {
+    if let Some(format) = formatting.number_format.filter(|format| !format.is_empty()) {
         // The format is what makes a serial read as a date, so it travels with the value.
         sink.set_number_format(cell.row, cell.column, Some(&format));
+    }
+
+    // The style travels with the value for the same reason: a bold or right-aligned cell stays so.
+    if !formatting.style.is_default() {
+        sink.set_cell_style(cell.row, cell.column, Some(&formatting.style));
     }
 
     if !raw.is_empty() {

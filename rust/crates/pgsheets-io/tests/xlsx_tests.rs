@@ -3,7 +3,7 @@
 
 use std::io::Cursor;
 
-use pgsheets_core::CellValue;
+use pgsheets_core::{CellStyle, CellValue, HorizontalAlign};
 use pgsheets_io::export::ExportOptions;
 use pgsheets_io::export::XlsxWriter;
 use pgsheets_io::import::XlsxImporter;
@@ -227,6 +227,78 @@ fn a_part_with_a_document_type_is_refused() {
     // Nothing from the hostile part reached the sink, and the cell count says so.
     assert_eq!(sink.get("A1"), "");
     assert_eq!(result.cells_imported, 0);
+}
+
+#[test]
+fn a_style_survives_the_round_trip() {
+    let mut source = MemorySource::new();
+
+    source.set_styled(
+        "C1",
+        "loud",
+        CellStyle::DEFAULT
+            .with_bold(true)
+            .with_italic(true)
+            .with_underline(true)
+            .with_align(HorizontalAlign::Right)
+            .with_text_color(Some([0xFF, 0x00, 0x00]))
+            .with_wrap(true),
+    );
+
+    let (sink, _) = read(write(&source, &ExportOptions::new()));
+
+    let style = sink.get_style("C1").expect("the style should come back");
+
+    assert!(style.bold);
+    assert!(style.italic);
+    assert!(style.underline);
+    assert!(style.wrap);
+    assert_eq!(style.align, HorizontalAlign::Right);
+    assert_eq!(style.text_color, Some([0xFF, 0x00, 0x00]));
+
+    // The value the style belonged to is still there.
+    assert_eq!(sink.get("C1"), "loud");
+}
+
+#[test]
+fn a_cell_with_no_style_comes_back_with_none() {
+    let mut source = MemorySource::new();
+    source.set("A1", "plain");
+
+    let (sink, _) = read(write(&source, &ExportOptions::new()));
+
+    assert_eq!(
+        sink.get_style("A1"),
+        None,
+        "nothing was styled, so nothing comes back"
+    );
+}
+
+#[test]
+fn the_style_table_records_a_font_and_an_alignment() {
+    let mut source = MemorySource::new();
+    source.set("A1", "plain");
+    source.set_styled(
+        "B1",
+        "loud",
+        CellStyle::DEFAULT
+            .with_bold(true)
+            .with_align(HorizontalAlign::Center),
+    );
+
+    let bytes = write(&source, &ExportOptions::new());
+    let mut archive = Archive::open(Cursor::new(bytes)).expect("the package should open");
+    let styles = archive.read_text("xl/styles.xml").expect("the part should read");
+
+    // The default face plus the bold one, and the plain record plus the styled one.
+    assert!(styles.contains("<fonts count=\"2\">"), "{styles}");
+    assert!(
+        styles.contains("<b></b>"),
+        "the bold font should be written: {styles}"
+    );
+    assert!(styles.contains("<cellXfs count=\"2\">"), "{styles}");
+    assert!(styles.contains("applyFont=\"1\""), "{styles}");
+    assert!(styles.contains("horizontal=\"center\""), "{styles}");
 }
 
 /// A minimal workbook part, for hand-built packages.

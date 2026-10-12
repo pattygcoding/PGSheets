@@ -5,6 +5,7 @@
 | Part | What it shows |
 |---|---|
 | **Menu bar** | File, Edit, Sheet. Every command is here, including ones without a key. |
+| **Formatting toolbar** | Bold, italic, underline, alignment, wrap and text colour for the selection. Each button shows whether the **active cell** already has that setting. |
 | **Name box** | The active cell (`C4`) or, when a range is selected, the range (`B2:D5`). It is a display, not an input — you cannot type a reference into it. |
 | **Formula bar** | The **raw input** of the active cell: what was typed, so `=SUM(B2:B4)` shows as `=SUM(B2:B4)` rather than as its result. Editing here and pressing **Enter** writes the cell. |
 | **Column and row headers** | `A`, `B`, `C`… across the top, `1`, `2`, `3`… down the side. Clicking one selects that whole column or row. |

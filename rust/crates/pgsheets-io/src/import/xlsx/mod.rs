@@ -88,7 +88,7 @@ impl SpreadsheetImporter for XlsxImporter {
         result.sheet_name = Some(first.name.clone());
 
         let shared_strings = parts::read_shared_strings(&mut archive);
-        let number_formats = styles::read_number_formats(&mut archive);
+        let number_formats = styles::read_cell_formats(&mut archive);
 
         // The path the workbook gave can be absolute inside the package or relative to the workbook
         // part, and it has already been resolved by whoever read the relationships.

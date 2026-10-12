@@ -11,7 +11,7 @@ spreadsheet package, and the only network access is the one-time `cargo` restore
 ```powershell
 cd rust
 cargo build  --workspace                   # every crate; --release for the shipped binary
-cargo test   --workspace                   # 243 tests, headless: no display, no window
+cargo test   --workspace                   # 260 tests, headless: no display, no window
 cargo run    -p pgsheets-app               # launch the app
 cargo fmt    --all --check                 # formatting is enforced, not suggested
 cargo clippy --workspace --all-targets -- -D warnings
@@ -50,7 +50,7 @@ change that disagrees with them is a behaviour change to be argued for, not a fi
 Two checks the old tree made possible are still open, and are the reason to be careful before trusting
 the app with real work:
 
-1. **Launch the window and use it.** Everything under it is covered by 243 headless tests, but the
+1. **Launch the window and use it.** Everything under it is covered by 260 headless tests, but the
    layout, the menus, the dialogs and the appearance have never been seen. `cargo run -p pgsheets-app`,
    then: arrows, Tab, type-to-edit, a drag selection, the scroll bars, the menus, the formula bar (it
    becomes editable when clicked), Open / Save / Save As, and the unsaved-changes question when the
@@ -95,7 +95,7 @@ These are load-bearing; breaking one silently degrades correctness or performanc
 
 ## Testing
 
-243 tests, headless: no display, no window, no dependence on the working directory. That is what makes
+260 tests, headless: no display, no window, no dependence on the working directory. That is what makes
 the engine, the model, the readers, the writers, the grid's geometry and the window's own wiring
 testable in CI on three platforms.
 

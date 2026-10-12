@@ -17,6 +17,7 @@ pub mod range;
 pub mod reference;
 pub mod serial_dates;
 pub mod store;
+pub mod style;
 pub mod undo;
 pub mod value;
 
@@ -30,5 +31,6 @@ pub use range::CellRange;
 pub use reference::CellReference;
 pub use serial_dates::CivilDateTime;
 pub use store::{CellStore, ExportSource, ImportSink};
+pub use style::{CellStyle, HorizontalAlign};
 pub use undo::{CellChange, UndoStack, UndoSuspension};
 pub use value::{CellError, CellValue};
