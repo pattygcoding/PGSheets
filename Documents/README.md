@@ -26,8 +26,7 @@ you build it.
 ## A sixty-second tour
 
 ```powershell
-cd rust
-cargo run -p pgsheets-app
+.\pg start            # PowerShell; in cmd it is just:  pg start
 ```
 
 The window opens with a small sample table already filled in. Now try this:

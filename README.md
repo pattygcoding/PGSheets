@@ -52,7 +52,15 @@ The sections below are the short version; those pages are the detail.
 
 ## Building and running
 
-The Rust toolchain (1.95 or newer — CI pins the exact version it tests):
+The Rust toolchain (1.95 or newer — CI pins the exact version it tests). From the repository root,
+one command does the rest:
+
+```powershell
+.\pg start            # PowerShell; in cmd it is just:  pg start
+```
+
+`pg` also takes `test`, `check` (format, lint and test, as CI runs them), `release` and `fmt`. The raw
+commands, if you would rather be explicit:
 
 ```powershell
 cd rust

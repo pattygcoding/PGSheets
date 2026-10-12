@@ -216,30 +216,31 @@ impl PgSheetsApp {
 
         self.apply_shortcuts(ui);
 
-        egui::MenuBar::new().ui(ui, |ui| self.menus(ui));
+        // Panels, outermost first and the central one last, which is the order egui requires. Each takes
+        // its strip off the top or the bottom and leaves the rest for the next one; doing this by hand
+        // with `with_layout` is what left the grid a rectangle of its own invention — a negative one.
+        egui::Panel::top("menu-bar").show(ui, |ui| self.menus(ui));
+        egui::Panel::top("formula-bar").show(ui, |ui| self.formula_bar(ui));
+        egui::Panel::bottom("status-bar").show(ui, |ui| self.status_bar(ui));
 
-        ui.separator();
-        self.formula_bar(ui);
-        ui.separator();
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE)
+            .show(ui, |ui| {
+                // The grid's own top-left corner, which is what positions the one editor over its cell.
+                let origin = ui.available_rect_before_wrap().min;
 
-        // The status bar is laid out upwards from the bottom of what is left, so the grid gets
-        // everything in between without either of them knowing about a panel.
-        ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
-            self.status_bar(ui);
-        });
+                let action = self.grid.show(ui, &self.workbook);
 
-        let origin = ui.available_rect_before_wrap().min;
-        let action = self.grid.show(ui, &self.workbook);
+                self.apply_action(action);
 
-        self.apply_action(action);
+                if self.edit_overlay(ui, origin) {
+                    // The editor is gone, so the keyboard goes back to the grid — otherwise the next key is
+                    // lost to a text box that no longer exists.
+                    let grid = crate::grid::focus_id(ui);
 
-        if self.edit_overlay(ui, origin) {
-            // The editor is gone, so the keyboard goes back to the grid — otherwise the next key is lost
-            // to a text box that no longer exists.
-            let grid = crate::grid::focus_id(ui);
-
-            ui.ctx().memory_mut(|memory| memory.request_focus(grid));
-        }
+                    ui.ctx().memory_mut(|memory| memory.request_focus(grid));
+                }
+            });
 
         // The window's own close button asks the same question File > Exit does. The close is cancelled
         // and re-issued once the question has been answered, which is what the C# window's OnClosing did.
@@ -744,6 +745,11 @@ impl PgSheetsApp {
             pgsheets_core::number_format::apply_general(total),
             pgsheets_core::number_format::apply_general(total / f64::from(numbers))
         );
+    }
+
+    /// The grid, for a test that needs to ask where it ended up.
+    pub fn grid(&self) -> &GridView {
+        &self.grid
     }
 
     /// The document.

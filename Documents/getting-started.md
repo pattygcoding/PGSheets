@@ -13,6 +13,17 @@ builds and tests on all three.
 
 ## Build and run
 
+From the repository root, one command:
+
+```powershell
+.\pg start            # PowerShell; in cmd it is just:  pg start
+```
+
+That builds what changed and opens the window. `pg` also takes `test`, `check` (format, lint and test,
+as CI runs them), `release` and `fmt`.
+
+Or do it by hand:
+
 ```powershell
 cd rust
 cargo run -p pgsheets-app
@@ -21,13 +32,12 @@ cargo run -p pgsheets-app
 Or build the release binary once and run it directly:
 
 ```powershell
-cd rust
-cargo build --workspace --release
-.\target\release\pgsheets.exe
+.\pg release
+.\rust\target\release\pgsheets.exe
 ```
 
-There is no installer. After a release build, `target\release\pgsheets.exe` is a single file you can
-copy elsewhere.
+There is no installer. After a release build, `rust\target\release\pgsheets.exe` is a single file you
+can copy elsewhere.
 
 ## What you see when it opens
 

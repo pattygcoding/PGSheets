@@ -71,6 +71,20 @@ cargo clippy --workspace --all-targets -- -D warnings
 push and pull request to `main`, and uploads an `lcov` coverage report from Ubuntu. Reproduce it
 locally with the five commands above.
 
+Or from the repository root, through the wrapper — which is what it exists for, since every real
+command runs from `rust/`:
+
+```powershell
+.\pg start      # build what changed and launch the app
+.\pg test       # every test, headless
+.\pg check      # format, lint and test, the way CI does — the pre-push command
+.\pg release    # the optimised binary, at rust/target/release/pgsheets.exe
+.\pg fmt        # format in place
+```
+
+`pg.ps1` holds it; `pg.cmd` is the `cmd.exe` entry point, so `pg start` works there without a `.\`
+prefix, and it bypasses the execution policy for that one run.
+
 ## Testing
 
 243 tests, all headless — no display, no window, no dependence on the working directory. Each crate

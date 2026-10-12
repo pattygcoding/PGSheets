@@ -19,6 +19,10 @@ const HEIGHT: f32 = 700.0;
 struct Harness {
     context: egui::Context,
     app: PgSheetsApp,
+
+    /// How many shapes the last frame painted, so a test can tell "nothing was drawn" from "it was drawn
+    /// somewhere else".
+    shapes: usize,
 }
 
 impl Harness {
@@ -26,6 +30,7 @@ impl Harness {
         Self {
             context: egui::Context::default(),
             app: PgSheetsApp::default(),
+            shapes: 0,
         }
     }
 
@@ -49,7 +54,11 @@ impl Harness {
 
         app.frame(&mut ui);
 
-        self.context.end_pass().drop_without_applying_deltas();
+        let output = self.context.end_pass();
+
+        self.shapes = output.shapes.len();
+
+        output.drop_without_applying_deltas();
     }
 
     /// A frame with no input, which is what lets a focus request take effect.
@@ -143,6 +152,41 @@ impl Harness {
     fn raw(&self, row: i32, column: i32) -> String {
         self.app.workbook().raw_input(row, column).to_string()
     }
+}
+
+#[test]
+fn the_grid_gets_a_real_rectangle_in_the_middle_of_the_window() {
+    let mut harness = Harness::new();
+    harness.idle();
+
+    let size = harness.app.grid().layout().size();
+
+    // The bars take a strip each and the grid gets what is left — and it has to be a *real* rectangle.
+    // An empty or negative one paints nothing at all, which is precisely the bug this test exists for:
+    // the window opened with the menu, the formula bar, the status bar and no sheet in between.
+    assert!(
+        size.width > f64::from(WIDTH) * 0.9 && size.width <= f64::from(WIDTH),
+        "the grid's width was {} of {WIDTH}",
+        size.width
+    );
+    assert!(
+        size.height > f64::from(HEIGHT) * 0.8 && size.height < f64::from(HEIGHT),
+        "the grid's height was {} of {HEIGHT}",
+        size.height
+    );
+
+    // The first cell is on screen rather than scrolled out of it.
+    let first = harness.app.grid().layout().cell_bounds(0, 0);
+
+    assert!(first.x > 0.0 && first.y >= 0.0, "{first:?}");
+    assert!(first.y + first.height < f64::from(HEIGHT), "{first:?}");
+
+    // And the frame actually painted something beyond the bars.
+    assert!(
+        harness.shapes > 40,
+        "the frame painted only {} shapes",
+        harness.shapes
+    );
 }
 
 #[test]
